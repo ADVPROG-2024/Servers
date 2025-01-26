@@ -45,13 +45,15 @@ impl CommunicationServer {
         self.server.connected_drone_ids.push(client_id.clone());
     }
 
-    fn find_path(&self, client_id: NodeId) -> Vec<NodeId> {
+    fn find_path(&self, client_id: NodeId) -> Vec<Vec<(NodeId, NodeType)>> {
         // Creazione dei canali per ciascun neighbour
         let mut senders = HashMap::new();
+        let mut receivers = Vec::new(); // Per simulare la ricezione nei vicini
 
         for &neighbour_id in &self.server.connected_drone_ids {
             let (sender, receiver) = unbounded::<Packet>();
             senders.insert(neighbour_id, sender);
+            receivers.push((neighbour_id, receiver));
         }
 
         // Creazione del pacchetto FloodRequest
@@ -75,13 +77,49 @@ impl CommunicationServer {
                 .expect(&format!("Error sending packet to neighbour {}", neighbour_id));
         }
 
+        // Variabile per raccogliere le informazioni ricevute
+        let mut responses = Vec::new();
 
-        let mut paths:Vec<Vec<NodeId>> = Vec::new();
+        // Itera sui canali dei vicini per ricevere i pacchetti
+        for (neighbour_id, receiver) in receivers {
+            match receiver.recv() {
+                Ok(received_packet) => {
+                    if let PacketType::FloodResponse(response) = received_packet.pack_type {
+                        println!(
+                            "FloodResponse received from neighbour {}: {:?}",
+                            neighbour_id, response
+                        );
+                        responses.push((neighbour_id, response));
+                    } else {
+                        println!(
+                            "Unexpected packet type received from neighbour {}",
+                            neighbour_id
+                        );
+                    }
+                }
+                Err(_) => {
+                    println!("Timeout or no response received from neighbour {}", neighbour_id);
+                }
+            }
+        }
 
-        // ricevere le flooding response
-        // aggiungere tutti i path_race al vettore paths
+        let mut paths = Vec::new();
 
-        let mut possible_neighbours:Vec<Vec<NodeId>> = Vec::new();
+        // Elaborazione delle risposte raccolte
+        if responses.is_empty() {
+            println!("No valid FloodResponses received.");
+        } else {
+            println!("Processed {} FloodResponses:", responses.len());
+            for (neighbour_id, response) in responses {
+                println!(
+                    "Neighbour {} responded with FloodResponse: {:?}",
+                    neighbour_id, response
+                );
+                paths.push(response.path_trace);
+            }
+        }
+
+        let mut possible_neighbours = Vec::new();
 
         for path in paths.iter() {
             if path.iter().any(|x| x == *client_id) {
@@ -110,9 +148,10 @@ impl CommunicationServer {
 
         let packets = fragment_message(&data, hops, 1);
 
-        for packet in packets {
+        for mut packet in packets {
             // Invia il pacchetto al neighbour utilizzando il suo NodeId
             if let Some(sender) = senders.get(&neighbour_id) {
+                packet.routing_header.hop_index = 1;
                 sender.send(packet).expect("Errore durante l'invio del pacchetto al neighbour.");
                 println!("Pacchetto inviato al neighbour con NodeId {}", neighbour_id);
             } else {
@@ -156,7 +195,7 @@ impl CommunicationServer {
     }
 }
 
-fn compute_best_path(paths: &Vec<Vec<NodeId>>, p1: NodeId, p2: NodeId) -> Vec<NodeId> {
+fn compute_best_path(paths: &Vec<Vec<(NodeId, NodeType)>>, p1: NodeId, p2: NodeId) -> Vec<Vec<(NodeId, NodeType)>> {
     todo!()
 }
 
