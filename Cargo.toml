@@ -1,0 +1,12 @@
+[package]
+name = "servers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dronegowski_utils = { git = "https://github.com/ADVPROG-2024/dronegowski_utils.git" }
+client = { git = "https://github.com/ADVPROG-2024/Client.git" }
+wg_2024 = { git = "https://github.com/WGL-2024/WGL_repo_2024.git" }
+crossbeam-channel = "0.5.14"
+serde = { version = "1.0.217", features = ["derive"] }
+log = "0.4.25"
