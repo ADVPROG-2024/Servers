@@ -18,19 +18,21 @@ struct DronegowskiServer {
     sim_controller_recv: Receiver<ServerCommand>, //Channel used to receive commands from the SC
     packet_send: HashMap<NodeId, Sender<Packet>>, //Map containing the sending channels of neighbour nodes
     packet_recv: Receiver<Packet>,           //Channel used to receive packets from nodes
+    message_storage: HashMap<(usize, NodeId), (Vec<u8>, Vec<bool>)>, // Store for reassembling messages
     server_type: ServerType,
     topology: HashSet<(NodeId, NodeId)>, // Edges of the graph
     node_types: HashMap<NodeId, NodeType>, // Node types (Client, Drone, Server)
 }
 
 impl DronegowskiServer {
-    fn new(id: NodeId, scs: Sender<ServerEvent>, scr: Receiver<ServerCommand>, ps: HashMap<NodeId, Sender<Packet>>, pr: Receiver<Packet>, st: ServerType) -> DronegowskiServer {
+    fn new(id: NodeId, scs: Sender<ServerEvent>, scr: Receiver<ServerCommand>, ps: HashMap<NodeId, Sender<Packet>>, pr: Receiver<Packet>,ms:HashMap<(usize, NodeId), (Vec<u8>, Vec<bool>)>,  st: ServerType) -> DronegowskiServer {
         DronegowskiServer {
             id,
             sim_controller_send: scs,
             sim_controller_recv: scr,
             packet_send: ps,
             packet_recv: pr,
+            message_storage: ms,
             server_type: st,
             topology: HashSet::new(),
             node_types: HashMap::new(),
@@ -50,8 +52,14 @@ impl DronegowskiServer {
                     if let Ok(cmd) = command_res {
                         match cmd {
                             ServerCommand::AddClient(client_id) => self.register_client(client_id),
-                            ServerCommand::SendClients(client_id) => self.send_register_client(client_id),
+                            /*ServerCommand::SendClients(client_id) => self.send_register_client(client_id),
                             ServerCommand::SendMessage(client_message) => self.forward_message(client_message)
+
+                            scusa pg ti ho commentato ste due righe, ma davano errore. penso in seguito a modifiche ad altri file
+                            ho aggiunto queste righe fittizie per non fare uscire errori per adesso
+                            */
+                            ServerCommand::SendClients(..)=>{},
+                            ServerCommand::SendMessage(..)=>{}
                         }
                     }
                 }
@@ -113,6 +121,31 @@ impl DronegowskiServer {
         }
     }
 
+    fn handle_packet(&mut self, packet: Packet) {
+        match packet.pack_type {
+            PacketType::MsgFragment(fragment) => {
+                //assemblare il messaggio
+            },
+            PacketType::FloodResponse(fs) => {
+                //aggiornare la topologia in base alla flood_response
+            },
+            PacketType::FloodRequest(fr) => {
+                //gestire la fr
+            }
+            _ =>{
+                //gestire gli altri tipi di pacchetti (ack, nack). Distinguere per i vari tipi di Server o è possibile implementazione unica?
+            }
+        }
+    }
+
+    fn handle_packet_text(&mut self, packet: Packet) {
+
+    }
+
+    fn handle_packet_media(&mut self, packet: Packet) {
+
+    }
+
     fn compute_best_path(&self, target_client: &NodeId) -> Option<Vec<NodeId>> {
         use std::collections::VecDeque;
 
@@ -163,6 +196,7 @@ fn main() {
         controller_recv,
         senders.clone(),
         packet_recv.clone(),
+        HashMap::new(),
         ServerType::CommunicationServer(Vec::new())
     );
 
