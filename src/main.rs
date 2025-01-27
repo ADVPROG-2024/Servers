@@ -3,15 +3,11 @@ use std::fmt::Display;
 use crossbeam_channel::{select, select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{fragment_message, fragmenter};
 use dronegowski_utils::hosts::{ServerType, ServerCommand, ServerEvent, TestMessage};
-use serde::{Serialize, Serializer};
-use wg_2024::config::{Server};
-use wg_2024::controller::{DroneCommand, DroneEvent};
-use wg_2024::network::{NodeId, SourceRoutingHeader};
+use wg_2024::network::{NodeId};
 use wg_2024::packet::{FloodRequest, NodeType, Packet, PacketType};
 use std::fs::File;
 use std::thread;
 use std::time::Duration;
-use serde::ser::SerializeStruct;
 // use eframe::egui;
 // use log::LevelFilter;
 // use simplelog::{ConfigBuilder, WriteLogger};
@@ -74,89 +70,24 @@ impl DronegowskiServer {
         }
     }
 
-    fn find_path(&self, client_id: &NodeId) -> Vec<NodeId> {
-
-        // Creazione del pacchetto FloodRequest
-        let packet = Packet {
-            pack_type: PacketType::FloodRequest(FloodRequest {
-                flood_id: 123,
-                initiator_id: self.id, // ID del server come iniziatore
-                path_trace: vec![(self.id, NodeType::Server)], // Traccia iniziale
-            }),
-            routing_header: SourceRoutingHeader {
-                hop_index: 0,
-                hops: vec![],
-            },
-            session_id: 1,
-        };
-
-        // Invio del pacchetto a tutti i vicini
-        for (&neighbour_id, sender) in &self.packet_send {
-            sender
-                .send(packet.clone())
-                .expect(&format!("Error sending packet to neighbour {}", neighbour_id));
-        }
-
-        // Variabile per raccogliere le informazioni ricevute
-        let mut responses = Vec::new();
-
-        match self.packet_recv.recv() {
-            Ok(received_packet) => {
-                if let PacketType::FloodResponse(response) = received_packet.pack_type {
-                    responses.push((response.path_trace.first().unwrap().0, response));
-                }
-            }
-            Err(_) => {
-                println!("Timeout or no response received from neighbour");
-            }
-        }
-
-        let mut paths = Vec::new();
-
-        // Elaborazione delle risposte raccolte
-        if responses.is_empty() {
-            println!("No valid FloodResponses received.");
-        } else {
-            for (_, response) in responses {
-                paths.push(response.path_trace);
-            }
-        }
-
-        let mut possible_neighbours:Vec<Vec<NodeId>> = Vec::new();
-
-        for path in paths.iter() {
-            if path.iter().any(|x| x.0 == *client_id) {
-                possible_neighbours.push(path.iter().map(|node| node.0.clone()).collect::<Vec<_>>());
-            }
-        }
-
-        let best_path = compute_best_path(&possible_neighbours, self.id, client_id);
-
-        best_path
-    }
-
     fn send_register_client(&mut self, client_id: &NodeId) { // TESTARE!!!!
-        let hops = self.find_path(client_id);
-        let neighbour_id = hops.first().unwrap();
+        if let ServerType::CommunicationServer(registered_clients) = self.clone().server_type {
+            if let Some(hops) = self.compute_best_path(client_id) {
+                let neighbour_id = hops.first().unwrap();
 
-        let data: TestMessage;
+                let data = TestMessage::Vector(registered_clients);
 
-        match self.clone().server_type {
-            ServerType::CommunicationServer(RegisteredClient) => data = TestMessage::Vector(RegisteredClient),
-            ServerType::ContentServer => {
+                let packets = fragment_message(&data, hops.clone(), 1);
 
-            }
-        }
-
-        let packets = fragment_message(&data, hops.clone(), 1);
-
-        for mut packet in packets {
-            // Invia il pacchetto al neighbour utilizzando il suo NodeId
-            if let Some(sender) = self.packet_send.get(&neighbour_id) {
-                packet.routing_header.hop_index = 1;
-                sender.send(packet).expect("Errore durante l'invio del pacchetto al neighbour.");
-            } else {
-                println!("Errore: Neighbour con NodeId {} non trovato!", neighbour_id);
+                for mut packet in packets {
+                    // Invia il pacchetto al neighbour utilizzando il suo NodeId
+                    if let Some(sender) = self.packet_send.get(&neighbour_id) {
+                        packet.routing_header.hop_index = 1;
+                        sender.send(packet).expect("Errore durante l'invio del pacchetto al neighbour.");
+                    } else {
+                        println!("Errore: Neighbour con NodeId {} non trovato!", neighbour_id);
+                    }
+                }
             }
         }
     }
@@ -164,26 +95,54 @@ impl DronegowskiServer {
     fn forward_message(&mut self, message: TestMessage) {
         if let TestMessage::WebServerMessages(ref client_message) = message {
             let client_id = client_message[0].id;
-            let hops = self.find_path(&client_id);
-            let neighbour_id = hops.first().unwrap();
+            if let Some(hops) = self.compute_best_path(&client_id) {
+                let neighbour_id = hops.first().unwrap();
 
-            let packets = fragment_message(&message, hops.clone(), 1);
+                let packets = fragment_message(&message, hops.clone(), 1);
 
-            for packet in packets {
-                // Invia il pacchetto al neighbour utilizzando il suo NodeId
-                if let Some(sender) = self.packet_send.get(&neighbour_id) {
-                    sender.send(packet).expect("Errore durante l'invio del pacchetto al neighbour.");
-                    println!("Pacchetto inviato al neighbour con NodeId {}", neighbour_id);
-                } else {
-                    println!("Errore: Neighbour con NodeId {} non trovato!", neighbour_id);
+                for packet in packets {
+                    // Invia il pacchetto al neighbour utilizzando il suo NodeId
+                    if let Some(sender) = self.packet_send.get(&neighbour_id) {
+                        sender.send(packet).expect("Errore durante l'invio del pacchetto al neighbour.");
+                        println!("Pacchetto inviato al neighbour con NodeId {}", neighbour_id);
+                    } else {
+                        println!("Errore: Neighbour con NodeId {} non trovato!", neighbour_id);
+                    }
                 }
             }
         }
     }
-}
 
-fn compute_best_path(paths: &Vec<Vec<NodeId>>, p1: NodeId, p2: &NodeId) -> Vec<NodeId> {
-    todo!()
+    fn compute_best_path(&self, target_client: &NodeId) -> Option<Vec<NodeId>> {
+        use std::collections::VecDeque;
+
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        let mut predecessors = HashMap::new();
+
+        queue.push_back(self.id);
+        visited.insert(self.id);
+
+        while let Some(current) = queue.pop_front() {
+            if current == *target_client {
+                let mut path = vec![current];
+                while let Some(&pred) = predecessors.get(&path[0]) {
+                    path.insert(0, pred);
+                }
+                return Some(path);
+            }
+
+            for &(node_a, node_b) in &self.topology {
+                if node_a == current && !visited.contains(&node_b) {
+                    visited.insert(node_b);
+                    queue.push_back(node_b);
+                    predecessors.insert(node_b, current);
+                }
+            }
+        }
+
+        None
+    }
 }
 
 fn main() {
