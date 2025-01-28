@@ -8,19 +8,19 @@ use wg_2024::packet::{FloodRequest, Fragment, NodeType, Packet, PacketType};
 use std::fs::File;
 use std::thread;
 use std::time::Duration;
-use serde::Deserialize;
+use serde::de::DeserializeOwned;
 
 #[derive(Clone)]
 struct DronegowskiServer {
     id: NodeId,
-    sim_controller_send: Sender<ServerEvent>,      //Channel used to send commands to the SC
-    sim_controller_recv: Receiver<ServerCommand>,  //Channel used to receive commands from the SC
-    packet_send: HashMap<NodeId, Sender<Packet>>,  //Map containing the sending channels of neighbour nodes
-    packet_recv: Receiver<Packet>,                 //Channel used to receive packets from nodes
-    server_type: ServerType,                       //typology of the server
-    topology: HashSet<(NodeId, NodeId)>,           // Edges of the graph
-    node_types: HashMap<NodeId, NodeType>,         // Node types (Client, Drone, Server)
-    message_storage: HashMap<u64, Vec<Fragment>>,                // Store for reassembling messages
+    sim_controller_send: Sender<ServerEvent>,           //Channel used to send commands to the SC
+    sim_controller_recv: Receiver<ServerCommand>,       //Channel used to receive commands from the SC
+    packet_send: HashMap<NodeId, Sender<Packet>>,       //Map containing the sending channels of neighbour nodes
+    packet_recv: Receiver<Packet>,                      //Channel used to receive packets from nodes
+    server_type: ServerType,                            //typology of the server
+    topology: HashSet<(NodeId, NodeId)>,                // Edges of the graph
+    node_types: HashMap<NodeId, NodeType>,              // Node types (Client, Drone, Server)
+    message_storage: HashMap<u64, Vec<Fragment>>,       // Store for reassembling messages
 }
 
 impl DronegowskiServer {
@@ -68,25 +68,10 @@ impl DronegowskiServer {
                             // Tutti i frammenti sono stati ricevuti, tenta di ricostruire il messaggio
                             match self.reconstruct_message(key) {
                                 Ok(message) => {
-                                    match message {
-                                        TestMessage::WebServerMessages(client_message) => {
-                                            match client_message {
-                                                ClientMessages::ServerType => {
-                                                    println!("Received ServerType message");
-                                                }
-                                                ClientMessages::RegistrationToChat => {
-                                                    self.register_client(client_id);
-                                                }
-                                                ClientMessages::ClientList => {
-                                                    self.send_register_client(client_id);
-                                                }
-                                                ClientMessages::MessageFor(target_id, message) => {
-                                                    self.forward_message(target_id, message);
-                                                }
-                                                _ => {
-                                                    println!("Unknown ClientMessage received");
-                                                }
-                                            }
+                                    match self.server_type {
+                                        ServerType::CommunicationServer(_) => self.handle_message_communication(message, client_id),
+                                        ServerType::ContentServer => {
+                                            // jas qua fai le tue cose
                                         }
                                     }
                                 }
@@ -102,9 +87,40 @@ impl DronegowskiServer {
                 // Gestisce la risposta di flooding aggiornando il grafo
                 self.update_graph(flood_response.path_trace);
             }
+            PacketType::Ack(ack) => {
+                //gestire ack
+            }
+            PacketType::Nack(nack) => {
+                //gestire nack
+            }
             _ => {
                 println!("Unhandled packet type");
             }
+        }
+    }
+
+    fn handle_message_communication(&mut self, message: TestMessage, client_id: NodeId) {
+        match message {
+            TestMessage::WebServerMessages(client_message) => {
+                match client_message {
+                    ClientMessages::ServerType => {
+                        self.send_my_type(client_id);
+                    }
+                    ClientMessages::RegistrationToChat => {
+                        self.register_client(client_id);
+                    }
+                    ClientMessages::ClientList => {
+                        self.send_register_client(client_id);
+                    }
+                    ClientMessages::MessageFor(target_id, message) => {
+                        self.forward_message(target_id, message);
+                    }
+                    _ => {
+                        println!("Unknown ClientMessage received");
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -214,7 +230,8 @@ impl DronegowskiServer {
         None
     }
 
-    pub fn reconstruct_message<'a, T: Deserialize<'a>>(&self, key: u64, ) -> Result<T, Box<dyn std::error::Error>> {
+
+    pub fn reconstruct_message<T: DeserializeOwned>(&self, key: u64) -> Result<T, Box<dyn std::error::Error>> {
         // Identifica il vettore di frammenti associato alla chiave
         if let Some(fragments) = self.message_storage.get(&key) {
             if let Some(first_fragment) = fragments.first() {
