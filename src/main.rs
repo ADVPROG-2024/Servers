@@ -20,11 +20,11 @@ struct DronegowskiServer {
     server_type: ServerType,                       //typology of the server
     topology: HashSet<(NodeId, NodeId)>,           // Edges of the graph
     node_types: HashMap<NodeId, NodeType>,         // Node types (Client, Drone, Server)
-    message_storage: Vec<Fragment>,                // Store for reassembling messages
+    message_storage: HashMap<u64, Vec<Fragment>>,                // Store for reassembling messages
 }
 
 impl DronegowskiServer {
-    fn new(id: NodeId, scs: Sender<ServerEvent>, scr: Receiver<ServerCommand>, ps: HashMap<NodeId, Sender<Packet>>, pr: Receiver<Packet>,  st: ServerType) -> DronegowskiServer {
+    fn new(id: NodeId, scs: Sender<ServerEvent>, scr: Receiver<ServerCommand>, ps: HashMap<NodeId, Sender<Packet>>, pr: Receiver<Packet>, st: ServerType) -> DronegowskiServer {
         DronegowskiServer {
             id,
             sim_controller_send: scs,
@@ -34,7 +34,7 @@ impl DronegowskiServer {
             server_type: st,
             topology: HashSet::new(),
             node_types: HashMap::new(),
-            message_storage: Vec::new(),
+            message_storage: HashMap::new(),
         }
     }
 
@@ -51,47 +51,66 @@ impl DronegowskiServer {
     }
 
     fn handle_packet(&mut self, packet: Packet) {
-        let client_id = packet.routing_header.hops[0];
+        let client_id = packet.routing_header.hops[0]; // Identifica il client ID
+        let key = packet.session_id; // Identifica la sessione
         match packet.pack_type {
             PacketType::MsgFragment(fragment) => {
-                self.message_storage.push(fragment.clone());
-                if fragment.fragment_index == fragment.total_n_fragments {
-                    match self.reconstruct_message() {
-                        Ok(message) => {
-                            match message {
-                                TestMessage::WebServerMessages(client_message) => {
-                                    match client_message {
-                                        ClientMessages::ServerType => {
+                // Aggiunta del frammento al message_storage
+                self.message_storage
+                    .entry(key)
+                    .or_insert_with(Vec::new)
+                    .push(fragment);
 
+                // Verifica se tutti i frammenti sono stati ricevuti
+                if let Some(fragments) = self.message_storage.get(&key) {
+                    if let Some(first_fragment) = fragments.first() {
+                        if fragments.len() as u64 == first_fragment.total_n_fragments {
+                            // Tutti i frammenti sono stati ricevuti, tenta di ricostruire il messaggio
+                            match self.reconstruct_message(key) {
+                                Ok(message) => {
+                                    match message {
+                                        TestMessage::WebServerMessages(client_message) => {
+                                            match client_message {
+                                                ClientMessages::ServerType => {
+                                                    println!("Received ServerType message");
+                                                }
+                                                ClientMessages::RegistrationToChat => {
+                                                    self.register_client(client_id);
+                                                }
+                                                ClientMessages::ClientList => {
+                                                    self.send_register_client(client_id);
+                                                }
+                                                ClientMessages::MessageFor(target_id, message) => {
+                                                    self.forward_message(target_id, message);
+                                                }
+                                                _ => {
+                                                    println!("Unknown ClientMessage received");
+                                                }
+                                            }
                                         }
-                                        ClientMessages::RegistrationToChat => self.register_client(client_id),
-                                        ClientMessages::ClientList => self.send_register_client(client_id),
-                                        ClientMessages::MessageFor(target_id, message) => self.forward_message(target_id, message),
-                                        _ => {}
                                     }
                                 }
+                                Err(e) => {
+                                    println!("Error reconstructing the message: {}", e);
+                                }
                             }
-                        },
-                        Err(e) => {
-                            println!("Error reconstruct the message: {}", e);
                         }
                     }
                 }
-            },
+            }
             PacketType::FloodResponse(flood_response) => {
+                // Gestisce la risposta di flooding aggiornando il grafo
                 self.update_graph(flood_response.path_trace);
             }
-            _ => {}
+            _ => {
+                println!("Unhandled packet type");
+            }
         }
     }
 
-    fn handle_packet_text(&mut self, packet: Packet) {
+    fn handle_packet_text(&mut self, packet: Packet) {}
 
-    }
-
-    fn handle_packet_media(&mut self, packet: Packet) {
-
-    }
+    fn handle_packet_media(&mut self, packet: Packet) {}
 
     fn register_client(&mut self, client_id: NodeId) {
         match self.clone().server_type {
@@ -104,45 +123,49 @@ impl DronegowskiServer {
         }
     }
 
+    fn send_message(&mut self, message: TestMessage, route: Vec<NodeId>) {
+        if let Some(&neighbour_id) = route.first() {
+            if let Some(sender) = self.packet_send.get(&neighbour_id) {
+                let serialized_data = bincode::serialize(&message).expect("Serialization failed");
+                let packets = fragment_message(&serialized_data, route, 1);
+
+                for mut packet in packets {
+                    packet.routing_header.hop_index = 1;
+                    sender.send(packet).expect("Errore durante l'invio del pacchetto al neighbour.");
+                }
+            } else {
+                println!("Errore: Neighbour con NodeId {} non trovato!", neighbour_id);
+            }
+        } else {
+            println!("Errore: Route vuota, impossibile determinare il neighbour!");
+        }
+    }
+
+
+    fn send_my_type(&mut self, client_id: NodeId) {
+        if let Some(best_path) = self.compute_best_path(client_id) {
+            let message = match self.clone().server_type {
+                ServerType::CommunicationServer(_) => "Communication Server",
+                ServerType::ContentServer => "Content Server",
+            };
+            self.send_message(TestMessage::Text(message.to_string()), best_path);
+        }
+    }
+
+
     fn send_register_client(&mut self, client_id: NodeId) { // TESTARE!!!!
         if let ServerType::CommunicationServer(registered_clients) = self.clone().server_type {
             if let Some(hops) = self.compute_best_path(client_id) {
-                let neighbour_id = hops.first().unwrap();
-
                 let data = TestMessage::Vector(registered_clients);
-                let serialized_data = bincode::serialize(&data).expect("Serialization failed");
-
-                let packets = fragment_message(&serialized_data, hops.clone(), 1);
-
-                for mut packet in packets {
-                    // Invia il pacchetto al neighbour utilizzando il suo NodeId
-                    if let Some(sender) = self.packet_send.get(&neighbour_id) {
-                        packet.routing_header.hop_index = 1;
-                        sender.send(packet).expect("Errore durante l'invio del pacchetto al neighbour.");
-                    } else {
-                        println!("Errore: Neighbour con NodeId {} non trovato!", neighbour_id);
-                    }
-                }
+                self.send_message(data, hops)
             }
         }
     }
 
     fn forward_message(&mut self, target_id: NodeId, message: String) {
         if let Some(hops) = self.compute_best_path(target_id) {
-            let neighbour_id = hops.first().unwrap();
-
-            let serialized_message = bincode::serialize(&message).expect("Serialization failed");
-            let packets = fragment_message(&serialized_message, hops.clone(), 1);
-
-            for packet in packets {
-                // Invia il pacchetto al neighbour utilizzando il suo NodeId
-                if let Some(sender) = self.packet_send.get(&neighbour_id) {
-                    sender.send(packet).expect("Errore durante l'invio del pacchetto al neighbour.");
-                    println!("Pacchetto inviato al neighbour con NodeId {}", neighbour_id);
-                } else {
-                    println!("Errore: Neighbour con NodeId {} non trovato!", neighbour_id);
-                }
-            }
+            let final_message = TestMessage::Text(message);
+            self.send_message(final_message, hops);
         }
     }
 
@@ -158,7 +181,6 @@ impl DronegowskiServer {
         for (node_id, node_type) in path_trace {
             self.node_types.insert(node_id, node_type);
         }
-
     }
 
     fn compute_best_path(&self, target_client: NodeId) -> Option<Vec<NodeId>> {
@@ -192,41 +214,49 @@ impl DronegowskiServer {
         None
     }
 
-    pub fn reconstruct_message<'a, T: Deserialize<'a>>(&self) -> Result<T, Box<dyn std::error::Error>> {
-        // Determina il numero totale di frammenti
-        let total_fragments = self.message_storage
-            .get(0)
-            .ok_or("Nessun frammento fornito")?
-            .total_n_fragments;
+    pub fn reconstruct_message<'a, T: Deserialize<'a>>(&self, key: u64, ) -> Result<T, Box<dyn std::error::Error>> {
+        // Identifica il vettore di frammenti associato alla chiave
+        if let Some(fragments) = self.message_storage.get(&key) {
+            if let Some(first_fragment) = fragments.first() {
+                if fragments.len() as u64 == first_fragment.total_n_fragments {
+                    // Crea una mappa indicizzata per ordinare i frammenti
+                    let mut fragment_map: HashMap<u64, &Fragment> = HashMap::new();
+                    for fragment in fragments {
+                        fragment_map.insert(fragment.fragment_index, fragment);
+                    }
 
-        // Ordina i frammenti in base al loro fragment_index
-        let mut fragment_map = HashMap::new();
-        for fragment in self.clone().message_storage {
-            fragment_map.insert(fragment.fragment_index, fragment);
-        }
+                    // Inizializza il buffer per i dati completi
+                    let mut full_data = Vec::new();
 
-        // Verifica che tutti i frammenti siano presenti
-        if fragment_map.len() as u64 != total_fragments {
-            return Err("Non tutti i frammenti sono stati ricevuti".into());
-        }
+                    // Usa l'assembler per ciascun frammento in ordine
+                    for index in 0..fragments.len() as u64 {
+                        if let Some(fragment) = fragment_map.get(&index) {
+                            assembler(&mut full_data, fragment);
+                        } else {
+                            return Err(format!("Frammento mancante con indice: {}", index).into());
+                        }
+                    }
 
-        // Inizializza il buffer per i dati completi
-        let mut full_data = Vec::new();
-
-        // Usa l'assembler per ogni frammento in ordine
-        for index in 0..total_fragments {
-            if let Some(fragment) = fragment_map.get(&index) {
-                assembler(&mut full_data, fragment);
+                    // Deserializza il messaggio completo
+                    let message: T = bincode::deserialize(&full_data)?;
+                    Ok(message)
+                } else {
+                    Err(format!(
+                        "Il numero totale di frammenti ({}) non corrisponde alla lunghezza del vettore ({})",
+                        first_fragment.total_n_fragments,
+                        fragments.len()
+                    )
+                        .into())
+                }
             } else {
-                return Err("Frammento mancante".into());
+                Err("Nessun frammento trovato nella lista".into())
             }
+        } else {
+            Err(format!("Nessun frammento trovato per la chiave: {}", key).into())
         }
-
-        // Deserializza il messaggio completo
-        let message: T = bincode::deserialize(&full_data)?;
-        Ok(message)
     }
 }
+
 
 
 fn main() {
