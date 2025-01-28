@@ -100,29 +100,34 @@ impl DronegowskiServer {
     }
 
     fn handle_message_communication(&mut self, message: TestMessage, client_id: NodeId) {
-        match message {
-            TestMessage::WebServerMessages(client_message) => {
-                match client_message {
-                    ClientMessages::ServerType => {
-                        self.send_my_type(client_id);
-                    }
-                    ClientMessages::RegistrationToChat => {
-                        self.register_client(client_id);
-                    }
-                    ClientMessages::ClientList => {
-                        self.send_register_client(client_id);
-                    }
-                    ClientMessages::MessageFor(target_id, message) => {
-                        self.forward_message(target_id, message);
-                    }
-                    _ => {
-                        println!("Unknown ClientMessage received");
+        if let TestMessage::WebServerMessages(client_message) = message {
+            match client_message {
+                ClientMessages::ServerType => self.send_my_type(client_id),
+                ClientMessages::RegistrationToChat => self.register_client(client_id),
+                ClientMessages::ClientList | ClientMessages::MessageFor(_, _) => {
+                    if let ServerType::CommunicationServer(registered_client) = &self.server_type {
+                        if registered_client.contains(&client_id) {
+                            match client_message {
+                                ClientMessages::ClientList => self.send_register_client(client_id),
+                                ClientMessages::MessageFor(target_id, message) => {
+                                    if registered_client.contains(&target_id) {
+                                        self.forward_message(target_id, message)
+                                    } else {
+                                        println!("target client not registered");
+                                    }
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            println!("client not registered");
+                        }
                     }
                 }
+                _ => println!("Unknown ClientMessage received"),
             }
-            _ => {}
         }
     }
+
 
     fn handle_packet_text(&mut self, packet: Packet) {}
 
@@ -169,7 +174,7 @@ impl DronegowskiServer {
     }
 
 
-    fn send_register_client(&mut self, client_id: NodeId) { // TESTARE!!!!
+    fn send_register_client(&mut self, client_id: NodeId) {
         if let ServerType::CommunicationServer(registered_clients) = self.clone().server_type {
             if let Some(hops) = self.compute_best_path(client_id) {
                 let data = TestMessage::Vector(registered_clients);
