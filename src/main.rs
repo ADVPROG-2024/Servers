@@ -70,9 +70,7 @@ impl DronegowskiServer {
                                 Ok(message) => {
                                     match self.server_type {
                                         ServerType::CommunicationServer(_) => self.handle_message_communication(message, client_id),
-                                        ServerType::ContentServer => {
-                                            // jas qua fai le tue cose
-                                        }
+                                        ServerType::ContentServer {..} => self.handle_message_content(message, client_id),
                                     }
                                 }
                                 Err(e) => {
@@ -128,9 +126,27 @@ impl DronegowskiServer {
         }
     }
 
-    fn handle_packet_text(&mut self, packet: Packet) {}
+    fn handle_message_content(&mut self, message: TestMessage, client_id: NodeId){
+        if let TestMessage::WebServerMessages(client_message) = message {
 
-    fn handle_packet_media(&mut self, packet: Packet) {}
+        }
+    }
+
+    fn get_all_texts(&self) -> Option<Vec<(u64, String)>> {
+        if let ServerType::ContentServer { text, .. } = &self.server_type {
+            Some(text.stored_texts.iter().map(|(&id, name)| (id, name.clone())).collect())
+        } else {
+            None
+        }
+    }
+
+    fn get_all_media(&self) -> Option<Vec<u64>> {
+        if let ServerType::ContentServer { media, .. } = &self.server_type {
+            Some(media.stored_media.keys().cloned().collect())
+        } else {
+            None
+        }
+    }
 
     fn register_client(&mut self, client_id: NodeId) {
         match self.clone().server_type {
