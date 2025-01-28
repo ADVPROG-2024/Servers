@@ -110,10 +110,16 @@ impl DronegowskiServer {
                             match client_message {
                                 ClientMessages::ClientList => self.send_register_client(client_id),
                                 ClientMessages::MessageFor(target_id, message) => {
-                                    self.forward_message(target_id, message)
+                                    if registered_client.contains(&target_id) {
+                                        self.forward_message(target_id, message)
+                                    } else {
+                                        println!("target client not registered");
+                                    }
                                 }
                                 _ => {}
                             }
+                        } else {
+                            println!("client not registered");
                         }
                     }
                 }
