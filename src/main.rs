@@ -128,7 +128,6 @@ impl DronegowskiServer {
         }
     }
 
-
     fn handle_packet_text(&mut self, packet: Packet) {}
 
     fn handle_packet_media(&mut self, packet: Packet) {}
@@ -162,7 +161,6 @@ impl DronegowskiServer {
         }
     }
 
-
     fn send_my_type(&mut self, client_id: NodeId) {
         if let Some(best_path) = self.compute_best_path(client_id) {
             let message = match self.clone().server_type {
@@ -172,7 +170,6 @@ impl DronegowskiServer {
             self.send_message(TestMessage::Text(message.to_string()), best_path);
         }
     }
-
 
     fn send_register_client(&mut self, client_id: NodeId) {
         if let ServerType::CommunicationServer(registered_clients) = self.clone().server_type {
@@ -235,7 +232,6 @@ impl DronegowskiServer {
         None
     }
 
-
     pub fn reconstruct_message<T: DeserializeOwned>(&self, key: u64) -> Result<T, Box<dyn std::error::Error>> {
         // Identifica il vettore di frammenti associato alla chiave
         if let Some(fragments) = self.message_storage.get(&key) {
@@ -278,7 +274,6 @@ impl DronegowskiServer {
         }
     }
 }
-
 
 
 fn main() {
