@@ -9,20 +9,18 @@ use std::fs::File;
 use std::thread;
 use std::time::Duration;
 use serde::Deserialize;
-// use eframe::egui;
-// use log::LevelFilter;
-// use simplelog::{ConfigBuilder, WriteLogger};
+
 #[derive(Clone)]
 struct DronegowskiServer {
     id: NodeId,
-    sim_controller_send: Sender<ServerEvent>, //Channel used to send commands to the SC
-    sim_controller_recv: Receiver<ServerCommand>, //Channel used to receive commands from the SC
-    packet_send: HashMap<NodeId, Sender<Packet>>, //Map containing the sending channels of neighbour nodes
-    packet_recv: Receiver<Packet>,           //Channel used to receive packets from nodes
-    server_type: ServerType,                //typology of the server
-    topology: HashSet<(NodeId, NodeId)>, // Edges of the graph
-    node_types: HashMap<NodeId, NodeType>, // Node types (Client, Drone, Server)
-    message_storage: Vec<Fragment>, // Store for reassembling messages
+    sim_controller_send: Sender<ServerEvent>,      //Channel used to send commands to the SC
+    sim_controller_recv: Receiver<ServerCommand>,  //Channel used to receive commands from the SC
+    packet_send: HashMap<NodeId, Sender<Packet>>,  //Map containing the sending channels of neighbour nodes
+    packet_recv: Receiver<Packet>,                 //Channel used to receive packets from nodes
+    server_type: ServerType,                       //typology of the server
+    topology: HashSet<(NodeId, NodeId)>,           // Edges of the graph
+    node_types: HashMap<NodeId, NodeType>,         // Node types (Client, Drone, Server)
+    message_storage: Vec<Fragment>,                // Store for reassembling messages
 }
 
 impl DronegowskiServer {
