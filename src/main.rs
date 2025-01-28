@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use crossbeam_channel::{select, select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{assembler, deserialize_message, fragment_message, fragmenter};
-use dronegowski_utils::hosts::{ServerType, ServerCommand, ServerEvent, TestMessage, ClientMessages, ServerMessages};
+use dronegowski_utils::hosts::{ServerType, ServerCommand, ServerEvent, TestMessage, ClientMessages, ServerMessages, TextServer};
 use wg_2024::network::{NodeId};
 use wg_2024::packet::{FloodRequest, Fragment, NodeType, Packet, PacketType};
 use std::fs::File;
@@ -128,24 +128,52 @@ impl DronegowskiServer {
 
     fn handle_message_content(&mut self, message: TestMessage, client_id: NodeId){
         if let TestMessage::WebServerMessages(client_message) = message {
-
+            if let ServerType::ContentServer{text,media} = &self.server_type {
+                match client_message {
+                    ClientMessages::ServerType => self.send_my_type(client_id),
+                    ClientMessages::FilesList => {
+                        let files = self.list_files();
+                        // inviare al client un ServerMessages::FilesList(files)
+                    }
+                    ClientMessages::File(id) => {
+                        match self.get_file_text(id) {
+                            Some(text) => {}, // inviare al client un ServerMessages::File(text)
+                            None => {}, // inviare al client un ServerMessages::Error("File not found".to_string())
+                        }
+                    }
+                    ClientMessages::Media(id) => {
+                        match self.get_media(id) {
+                            Some(media) =>{}, // inviare al client unServerMessages::Media(media)
+                            None => {}, // inviare al client un ServerMessages::Error("Media not found".to_string()),
+                        }
+                    }
+                    _ => println!("Unknown ClientMessage received"),
+                }
+            }
         }
     }
 
-    fn get_all_texts(&self) -> Option<Vec<(u64, String)>> {
-        if let ServerType::ContentServer { text, .. } = &self.server_type {
-            Some(text.stored_texts.iter().map(|(&id, name)| (id, name.clone())).collect())
-        } else {
-            None
+    fn list_files(&self) -> Vec<(u64, String)> {
+        if let ServerType::ContentServer {text, .. } = &self.server_type {
+            let files = text.stored_texts.iter()
+                .map(|(&id, content)| (id, content.clone()))
+                .collect();
+            return files;
         }
+        Vec::new()
     }
 
-    fn get_all_media(&self) -> Option<Vec<u64>> {
-        if let ServerType::ContentServer { media, .. } = &self.server_type {
-            Some(media.stored_media.keys().cloned().collect())
-        } else {
-            None
+    fn get_file_text(&self, file_id: u64) -> Option<String> {
+        if let ServerType::ContentServer {text, .. } = &self.server_type {
+            return text.stored_texts.get(&file_id).cloned();
         }
+        None
+    }
+    fn get_media(&self, media_id: u64) -> Option<Vec<u8>> {
+        if let ServerType::ContentServer {media, .. } = &self.server_type {
+            return media.get(&media_id).cloned();
+        }
+        None
     }
 
     fn register_client(&mut self, client_id: NodeId) {
