@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use crossbeam_channel::{select, select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{assembler, deserialize_message, fragment_message, fragmenter};
-use dronegowski_utils::hosts::{ServerType, ServerCommand, ServerEvent, TestMessage, ClientMessages};
+use dronegowski_utils::hosts::{ServerType, ServerCommand, ServerEvent, TestMessage, ClientMessages, ServerMessages};
 use wg_2024::network::{NodeId};
 use wg_2024::packet::{FloodRequest, Fragment, NodeType, Packet, PacketType};
 use std::fs::File;
@@ -109,7 +109,7 @@ impl DronegowskiServer {
                                 ClientMessages::ClientList => self.send_register_client(client_id),
                                 ClientMessages::MessageFor(target_id, message) => {
                                     if registered_client.contains(&target_id) {
-                                        self.forward_message(target_id, message)
+                                        self.forward_message(target_id, client_id, message)
                                     } else {
                                         println!("target client not registered");
                                     }
@@ -159,7 +159,7 @@ impl DronegowskiServer {
         }
     }
 
-    fn send_message(&mut self, message: TestMessage, route: Vec<NodeId>) {
+    fn send_message(&mut self, message: ServerMessages, route: Vec<NodeId>) {
         if let Some(&neighbour_id) = route.first() {
             if let Some(sender) = self.packet_send.get(&neighbour_id) {
                 let serialized_data = bincode::serialize(&message).expect("Serialization failed");
@@ -183,22 +183,22 @@ impl DronegowskiServer {
                 ServerType::CommunicationServer(_) => "Communication Server",
                 ServerType::ContentServer => "Content Server",
             };
-            self.send_message(TestMessage::Text(message.to_string()), best_path);
+            self.send_message(ServerMessages::ServerType(message.to_string()), best_path);
         }
     }
 
     fn send_register_client(&mut self, client_id: NodeId) {
         if let ServerType::CommunicationServer(registered_clients) = self.clone().server_type {
             if let Some(hops) = self.compute_best_path(client_id) {
-                let data = TestMessage::Vector(registered_clients);
+                let data = ServerMessages::ClientList(registered_clients);
                 self.send_message(data, hops)
             }
         }
     }
 
-    fn forward_message(&mut self, target_id: NodeId, message: String) {
+    fn forward_message(&mut self, target_id: NodeId, client_id: NodeId, message: String) {
         if let Some(hops) = self.compute_best_path(target_id) {
-            let final_message = TestMessage::Text(message);
+            let final_message = ServerMessages::MessageFrom(client_id, message);
             self.send_message(final_message, hops);
         }
     }
