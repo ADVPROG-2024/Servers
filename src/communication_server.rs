@@ -59,7 +59,7 @@ impl DronegowskiServer for CommunicationServer {
     }
 
     fn handle_packet(&mut self, packet: Packet) {
-        let client_id = packet.routing_header.hops[0]; // Identifica il client ID
+        let client_id = packet.routing_header.source().unwrap(); // Identifica il client ID
         let key = packet.session_id; // Identifica la sessione
         match packet.pack_type {
             PacketType::MsgFragment(fragment) => {
