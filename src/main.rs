@@ -9,6 +9,7 @@ use wg_2024::packet::{NodeType, Packet};
 use std::thread;
 use serde::de::DeserializeOwned;
 use crate::communication_server::CommunicationServer;
+use crate::content_server::ContentServer;
 
 pub trait DronegowskiServer {
     fn new(id: NodeId) -> Self;
@@ -24,9 +25,9 @@ pub trait DronegowskiServer {
 
 fn main() {
     // creazione del Server
-    let mut communication_server = CommunicationServer::new(
-        generate_unique_id() as NodeId
-    );
+    let mut communication_server = CommunicationServer::new(generate_unique_id() as NodeId);
+
+    let mut content_server = ContentServer::new(generate_unique_id() as NodeId);
 
     let mut handles = Vec::new();
 
