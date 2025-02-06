@@ -16,7 +16,6 @@ pub trait DronegowskiServer {
     fn run(&mut self);
     fn handle_packet(&mut self, packet: Packet);
     fn send_message(&mut self, message: ServerMessages, route: Vec<NodeId>);
-    fn send_my_type(&mut self, client_id: NodeId);
     fn update_graph(&mut self, path_trace: Vec<(NodeId, NodeType)>);
     fn compute_best_path(&self, target_client: NodeId) -> Option<Vec<NodeId>>;
     fn reconstruct_message<T: DeserializeOwned>(&mut self, key: u64) -> Result<T, Box<dyn std::error::Error>>;

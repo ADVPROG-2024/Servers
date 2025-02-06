@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::process::Command;
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{assembler, fragment_message};
 use dronegowski_utils::hosts::{ClientMessages, ServerCommand, ServerEvent, ServerMessages, ServerType, TestMessage};
@@ -97,9 +96,74 @@ impl DronegowskiServer for ContentServer {
         }
     }
 
-    fn handle_packet(&mut self, packet: Packet){}
+    fn handle_packet(&mut self, packet: Packet){
+        let client_id = packet.routing_header.hops[0];
+        let key = packet.session_id;
+        match packet.pack_type {
+            PacketType::MsgFragment(fragment) => {
+                self.message_storage
+                    .entry(key)
+                    .or_insert_with(Vec::new)
+                    .push(fragment);
 
-    fn send_message(&mut self, message: ServerMessages, route: Vec<NodeId>) {
+                // Check if all the fragments are received
+                if let Some(fragments) = self.message_storage.get(&key) {
+                    if let Some(first_fragment) = fragments.first() {
+                        if fragments.len() as u64 == first_fragment.total_n_fragments {
+                            match self.reconstruct_message(key) {
+                                Ok(message) => {
+                                    if let TestMessage::WebServerMessages(client_messages) = message {
+                                        match client_messages {
+                                            ClientMessages::ServerType =>{
+                                                self.send_message(ServerMessages::ServerType(ServerType::Content), client_id);
+                                            },
+                                            ClientMessages::FilesList =>{
+                                                let list = self.list_files();
+                                                self.send_message(ServerMessages::FilesList(list), client_id);
+                                            },
+                                            ClientMessages::File(file_id) =>{
+                                                match self.get_file_text(file_id) {
+                                                    Some(text) => {self.send_message(ServerMessages::File(text), client_id);},
+                                                    None => {self.send_message(ServerMessages::Error("file not found".to_string()),client_id)},
+                                                }
+                                            },
+                                            ClientMessages::Media(media_id) =>{
+                                                match self.get_media(media_id) {
+                                                    Some(media) => self.send_message(ServerMessages::Media(media), client_id),
+                                                    None => {self.send_message(ServerMessages::Error("media not found".to_string()),client_id)},
+                                                }
+                                            },
+                                            _ => {println!("Unkown message type");},
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("Error reconstructing the message: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            PacketType::FloodResponse(flood_response) => {
+                // update the graph knowledge based on the new FloodResponse
+                self.update_graph(flood_response.path_trace);
+            }
+            PacketType::Ack(ack) => {
+                //gestire ack
+            }
+            PacketType::Nack(nack) => {
+                //gestire nack
+            }
+            _ => {
+                println!("Unhandled packet type");
+            }
+        }
+    }
+
+    fn send_message(&mut self, message: ServerMessages, destination: NodeId) {
+        let route=self.compute_best_path(destination).unwrap_or(Vec::new());
+
         if let Some(&neighbour_id) = route.first() {
             if let Some(sender) = self.packet_send.get(&neighbour_id) {
                 let serialized_data = bincode::serialize(&message).expect("Serialization failed");
@@ -107,21 +171,16 @@ impl DronegowskiServer for ContentServer {
 
                 for mut packet in packets {
                     packet.routing_header.hop_index = 1;
-                    sender.send(packet).expect("Errore durante l'invio del pacchetto al neighbour.");
+                    sender.send(packet).expect("Error occurred sending the message to the neighbour.");
                 }
             } else {
-                println!("Errore: Neighbour con NodeId {} non trovato!", neighbour_id);
+                println!("Error: Neighbour {} not found!", neighbour_id);
             }
         } else {
-            println!("Errore: Route vuota, impossibile determinare il neighbour!");
+            println!("Error: There is no available route");
         }
     }
 
-    fn send_my_type(&mut self, client_id: NodeId) {
-        if let Some(best_path) = self.compute_best_path(client_id) {
-            self.send_message(ServerMessages::ServerType(ServerType::Content), best_path);
-        }
-    }
 
     fn update_graph(&mut self, path_trace: Vec<(NodeId, NodeType)>) {
         log::info!("Aggiornamento del grafo con i dati ricevuti: {:?}", path_trace);
@@ -246,83 +305,6 @@ impl ContentServer {
             panic!("the {} is not neighbour of the drone {}", node_id, self.id);
         }
     }
-
-
-
-    /*
-    fn handle_packet(&mut self, packet: Packet) {
-        let client_id = packet.routing_header.hops[0]; // Identifica il client ID
-        let key = packet.session_id; // Identifica la sessione
-        match packet.pack_type {
-            PacketType::MsgFragment(fragment) => {
-                // Aggiunta del frammento al message_storage
-                self.message_storage
-                    .entry(key)
-                    .or_insert_with(Vec::new)
-                    .push(fragment);
-
-                // Verifica se tutti i frammenti sono stati ricevuti
-                if let Some(fragments) = self.message_storage.get(&key) {
-                    if let Some(first_fragment) = fragments.first() {
-                        if fragments.len() as u64 == first_fragment.total_n_fragments {
-                            // Tutti i frammenti sono stati ricevuti, tenta di ricostruire il messaggio
-                            match self.reconstruct_message(key) {
-                                Ok(message) => {
-                                    match self.server_type {
-                                        ServerType::CommunicationServer(_) => self.handle_message_communication(message, client_id),
-                                        ServerType::ContentServer {..} => self.handle_message_content(message, client_id),
-                                    }
-                                }
-                                Err(e) => {
-                                    println!("Error reconstructing the message: {}", e);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            PacketType::FloodResponse(flood_response) => {
-                // Gestisce la risposta di flooding aggiornando il grafo
-                self.update_graph(flood_response.path_trace);
-            }
-            PacketType::Ack(ack) => {
-                //gestire ack
-            }
-            PacketType::Nack(nack) => {
-                //gestire nack
-            }
-            _ => {
-                println!("Unhandled packet type");
-            }
-        }
-    }
-
-    fn handle_message_content(&mut self, message: TestMessage, client_id: NodeId){
-        if let TestMessage::WebServerMessages(client_message) = message {
-            if let ServerType::ContentServer{text,media} = &self.server_type {
-                match client_message {
-                    ClientMessages::ServerType => self.send_my_type(client_id),
-                    ClientMessages::FilesList => {
-                        let files = self.list_files();
-                        // inviare al client un ServerMessages::FilesList(files)
-                    }
-                    ClientMessages::File(id) => {
-                        match self.get_file_text(id) {
-                            Some(text) => {}, // inviare al client un ServerMessages::File(text)
-                            None => {}, // inviare al client un ServerMessages::Error("File not found".to_string())
-                        }
-                    }
-                    ClientMessages::Media(id) => {
-                        match self.get_media(id) {
-                            Some(media) =>{}, // inviare al client unServerMessages::Media(media)
-                            None => {}, // inviare al client un ServerMessages::Error("Media not found".to_string()),
-                        }
-                    }
-                    _ => println!("Unknown ClientMessage received"),
-                }
-            }
-        }
-    }*/
 
 
     fn list_files(&self) -> Vec<(u64, String)> {

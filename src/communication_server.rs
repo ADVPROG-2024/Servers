@@ -143,12 +143,6 @@ impl DronegowskiServer for CommunicationServer {
         }
     }
 
-    fn send_my_type(&mut self, client_id: NodeId) {
-        if let Some(best_path) = self.compute_best_path(client_id) {
-            self.send_message(ServerMessages::ServerType(self.clone().server_type), best_path);
-        }
-    }
-
     fn update_graph(&mut self, path_trace: Vec<(NodeId, NodeType)>) {
         log::info!("Aggiornamento del grafo con i dati ricevuti: {:?}", path_trace);
         for i in 0..path_trace.len() - 1 {
@@ -238,6 +232,11 @@ impl DronegowskiServer for CommunicationServer {
 }
 
 impl CommunicationServer {
+    fn send_my_type(&mut self, client_id: NodeId) {
+        if let Some(best_path) = self.compute_best_path(client_id) {
+            self.send_message(ServerMessages::ServerType(self.clone().server_type), best_path);
+        }
+    }
     fn register_client(&mut self, client_id: NodeId) {
         self.registered_client.push(client_id.clone());
     }
