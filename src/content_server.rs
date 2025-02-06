@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::process::Command;
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{assembler, fragment_message};
 use dronegowski_utils::hosts::{ClientMessages, ServerCommand, ServerEvent, ServerMessages, ServerType, TestMessage};
@@ -12,7 +13,6 @@ use serde::de::DeserializeOwned;
 pub struct TextServer {
     pub stored_texts: HashMap<u64, String>, // ID → Testo
 }
-
 impl TextServer {
     pub fn new() -> TextServer {
         Self{
@@ -20,18 +20,18 @@ impl TextServer {
         }
     }
 }
-
 impl Default for TextServer {
     fn default() -> Self {
         Self::new()
     }
 }
 
+
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct MediaServer {
     pub stored_media: HashMap<u64, Vec<u8>>, // ID → Media
 }
-
 impl MediaServer {
     pub fn new() -> MediaServer {
         Self{
@@ -39,12 +39,13 @@ impl MediaServer {
         }
     }
 }
-
 impl Default for MediaServer {
     fn default() -> Self {
         Self::new()
     }
 }
+
+
 
 pub struct ContentServer {
     id: NodeId,
@@ -86,7 +87,12 @@ impl DronegowskiServer for ContentServer {
                     if let Ok(packet) = packet_res {
                         self.handle_packet(packet);
                     }
-                }
+                },
+                recv(self.sim_controller_recv) -> command_res => {
+                    if let Ok(command) = command_res {
+                        self.handle_command(command);
+                    }
+                },
             }
         }
     }
@@ -208,6 +214,41 @@ impl DronegowskiServer for ContentServer {
 }
 
 impl ContentServer {
+
+    fn handle_command(&mut self, command: ServerCommand) {
+        log::info!("ContentServer {}: Received ServerCommand: {:?}", self.id, command);
+
+        match command {
+            ServerCommand::AddSender(id, sender) => {
+                self.add_neighbor(id, sender);
+            }
+            ServerCommand::RemoveSender(id) => {
+                self.remove_neighbor(id);
+            }
+            _ =>{
+                // Unclassified Command
+            }
+        }
+    }
+    fn add_neighbor(&mut self, node_id: NodeId, sender: Sender<Packet>) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.packet_send.entry(node_id) {
+            e.insert(sender);
+            // send a FloodRequest
+        } else {
+            panic!("Sender for node {node_id} already stored in the map!");
+        }
+    }
+    fn remove_neighbor(&mut self, node_id: NodeId) {
+        if self.packet_send.contains_key(&node_id) {
+            self.packet_send.remove(&node_id);
+            // send a FloodRequest?
+        } else {
+            panic!("the {} is not neighbour of the drone {}", node_id, self.id);
+        }
+    }
+
+
+
     /*
     fn handle_packet(&mut self, packet: Packet) {
         let client_id = packet.routing_header.hops[0]; // Identifica il client ID
@@ -283,12 +324,12 @@ impl ContentServer {
         }
     }*/
 
+
     fn list_files(&self) -> Vec<(u64, String)> {
         self.text.stored_texts.iter()
             .map(|(&id, content)| (id, content.clone()))
             .collect()
     }
-
     fn get_file_text(&self, file_id: u64) -> Option<String> {
         self.text.stored_texts.get(&file_id).cloned()
     }
