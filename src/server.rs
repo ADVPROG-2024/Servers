@@ -20,14 +20,3 @@ pub trait DronegowskiServer {
     fn compute_best_path(&self, target_client: NodeId) -> Option<Vec<NodeId>>;
     fn reconstruct_message<T: DeserializeOwned>(&mut self, key: u64) -> Result<T, Box<dyn std::error::Error>>;
 }
-
-
-fn main() {
-    // creazione del Server
-    //let mut communication_server = CommunicationServer::new(generate_unique_id() as NodeId);
-
-
-    let mut handles = Vec::new();
-
-    //handles.push(thread::spawn(move || communication_server.run()));
-}
