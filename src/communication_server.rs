@@ -135,7 +135,7 @@ impl DronegowskiServer for CommunicationServer {
                 self.update_graph(flood_response.path_trace);
             }
             PacketType::FloodRequest( mut flood_request) => {
-                flood_request.path_trace.push((self.id, NodeType::Server));
+                // flood_request.path_trace.push((self.id, NodeType::Server));
 
                 let flood_response = FloodResponse {
                     flood_id: flood_request.flood_id,
