@@ -242,7 +242,7 @@ impl DronegowskiServer for CommunicationServer {
 
     fn reconstruct_message<T: DeserializeOwned>(&mut self, key: u64) -> Result<T, Box<dyn Error>> {
         // Identifica il vettore di frammenti associato alla chiave
-        if let Some(fragments) = self.message_storage.get(&key) {
+        if let Some(fragments) = self.message_storage.clone().get(&key) {
             if let Some(first_fragment) = fragments.first() {
                 if fragments.len() as u64 == first_fragment.total_n_fragments {
                     self.message_storage.remove(&key);
