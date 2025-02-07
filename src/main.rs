@@ -1,18 +1,21 @@
 mod communication_server;
 mod content_server;
 
+use std::collections::HashMap;
 use std::fmt::Display;
-use dronegowski_utils::hosts::{ServerMessages};
+use dronegowski_utils::hosts::{ServerCommand, ServerEvent, ServerMessages, ServerType};
 use dronegowski_utils::functions::generate_unique_id;
 use wg_2024::network::{NodeId};
 use wg_2024::packet::{NodeType, Packet};
 use std::thread;
+use crossbeam_channel::{Receiver, Sender};
 use serde::de::DeserializeOwned;
 use crate::communication_server::CommunicationServer;
 use crate::content_server::ContentServer;
 
 pub trait DronegowskiServer {
-    fn new(id: NodeId) -> Self;
+    fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType) -> Self;
+    fn network_discovery(&self);
     fn run(&mut self);
     fn handle_packet(&mut self, packet: Packet);
     fn send_message(&mut self, message: ServerMessages, route: Vec<NodeId>);

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::time::Duration;
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
-use dronegowski_utils::functions::{assembler, fragment_message};
+use dronegowski_utils::functions::{assembler, fragment_message, generate_unique_id};
 use dronegowski_utils::hosts::{ClientMessages, ServerCommand, ServerEvent, ServerMessages, ServerType, TestMessage};
 use serde::de::DeserializeOwned;
 use wg_2024::network::{NodeId, SourceRoutingHeader};
@@ -24,27 +24,24 @@ pub struct CommunicationServer {
 }
 
 impl DronegowskiServer for CommunicationServer {
-    fn new(id: NodeId) -> Self {
-        // Creazione dei canali
-        let (sim_controller_send, sim_controller_recv) = unbounded::<ServerEvent>();
-        let (send_controller, controller_recv) = unbounded::<ServerCommand>();
-        let (packet_send, packet_recv) = unbounded::<Packet>();
+    fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType) -> Self {
 
-        // Mappa dei vicini (drone collegati)
-        let (neighbor_send, neighbor_recv) = unbounded();
-        let mut senders = HashMap::new();
-        CommunicationServer {
+        let mut server = Self {
             id,
             sim_controller_send,
-            sim_controller_recv: controller_recv,
-            packet_send: senders,
+            sim_controller_recv,
             packet_recv,
-            registered_client: Vec::new(),
+            packet_send,
+            server_type,
+            message_storage: HashMap::new(),
             topology: HashSet::new(),
             node_types: HashMap::new(),
-            message_storage: HashMap::new(),
-            server_type: ServerType::Communication,
-        }
+            registered_client: Vec::new(),
+        };
+
+        server.network_discovery();
+
+        server
     }
 
     fn run(&mut self) {
@@ -56,6 +53,29 @@ impl DronegowskiServer for CommunicationServer {
                     }
                 }
             }
+        }
+    }
+
+    fn network_discovery(&self) {
+        let mut path_trace = Vec::new();
+        path_trace.push((self.id, NodeType::Server));
+
+        // Send flood_request to the neighbour nodes
+        let flood_request = FloodRequest {
+            flood_id: generate_unique_id(),
+            initiator_id: self.id,
+            path_trace,
+        };
+
+        for (node_id, sender) in &self.packet_send {
+            let _ = sender.send(Packet {
+                pack_type: PacketType::FloodRequest(flood_request.clone()),
+                routing_header: SourceRoutingHeader {
+                    hop_index: 0,
+                    hops: vec![self.id, *node_id],
+                },
+                session_id: flood_request.flood_id,
+            });
         }
     }
 
@@ -158,7 +178,8 @@ impl DronegowskiServer for CommunicationServer {
 
         for (node_id, node_type) in path_trace {
             self.node_types.insert(node_id, node_type);
-        }    }
+        }
+    }
 
     fn compute_best_path(&self, target_client: NodeId) -> Option<Vec<NodeId>> {
         use std::collections::VecDeque;
@@ -187,7 +208,6 @@ impl DronegowskiServer for CommunicationServer {
                 }
             }
         }
-
         None
     }
 
@@ -276,7 +296,14 @@ impl CommunicationServer {
     }
 
     fn register_client(&mut self, client_id: NodeId) {
-        self.registered_client.push(client_id.clone());
+        if let Some(path) = self.compute_best_path(client_id) {
+            if self.registered_client.contains(&client_id) {
+                self.send_message(ServerMessages::RegistrationError("client already registered".to_string()), path);
+            } else {
+                self.registered_client.push(client_id.clone());
+                self.send_message(ServerMessages::RegistrationOk, path);
+            }
+        }
     }
 
     fn send_register_client(&mut self, client_id: NodeId) {
