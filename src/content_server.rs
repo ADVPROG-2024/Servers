@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
-use dronegowski_utils::functions::{assembler, fragment_message};
+use dronegowski_utils::functions::{assembler, fragment_message, generate_unique_id};
 use dronegowski_utils::hosts::{ClientMessages, ServerCommand, ServerEvent, ServerMessages, ServerType, TestMessage};
 use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
@@ -53,6 +53,7 @@ pub struct ContentServer {
     sim_controller_recv: Receiver<ServerCommand>,       //Channel used to receive commands from the SC
     packet_send: HashMap<NodeId, Sender<Packet>>,       //Map containing the sending channels of neighbour nodes
     packet_recv: Receiver<Packet>,                      //Channel used to receive packets from nodes
+    server_type: ServerType,
     topology: HashSet<(NodeId, NodeId)>,                // Edges of the graph
     node_types: HashMap<NodeId, NodeType>,              // Node types (Client, Drone, Server)
     message_storage: HashMap<u64, Vec<Fragment>>,       // Store for reassembling messages
@@ -61,22 +62,48 @@ pub struct ContentServer {
 }
 
 impl DronegowskiServer for ContentServer {
-    fn new(id: NodeId) -> Self {
-        let (sim_controller_send, sim_controller_recv) = unbounded::<ServerEvent>();
-        let (send_controller, controller_recv) = unbounded::<ServerCommand>();
-        let (packet_send, packet_recv) = unbounded::<Packet>();
-        let mut senders = HashMap::new();
-        Self {
+    fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType) -> Self {
+
+        let mut server = Self {
             id,
-            sim_controller_send: sim_controller_send,
-            sim_controller_recv: controller_recv,
-            packet_send: senders.clone(),
-            packet_recv: packet_recv.clone(),
+            sim_controller_send,
+            sim_controller_recv,
+            packet_recv,
+            packet_send,
+            server_type,
+            message_storage: HashMap::new(),
             topology: HashSet::new(),
             node_types: HashMap::new(),
-            message_storage: HashMap::new(),
             text: TextServer::default(),
-            media: MediaServer::default(),
+            media: MediaServer::new(),
+
+        };
+
+        server.network_discovery();
+
+        server
+    }
+
+    fn network_discovery(&self) {
+        let mut path_trace = Vec::new();
+        path_trace.push((self.id, NodeType::Server));
+
+        // Send flood_request to the neighbour nodes
+        let flood_request = FloodRequest {
+            flood_id: generate_unique_id(),
+            initiator_id: self.id,
+            path_trace,
+        };
+
+        for (node_id, sender) in &self.packet_send {
+            let _ = sender.send(Packet {
+                pack_type: PacketType::FloodRequest(flood_request.clone()),
+                routing_header: SourceRoutingHeader {
+                    hop_index: 0,
+                    hops: vec![self.id, *node_id],
+                },
+                session_id: flood_request.flood_id,
+            });
         }
     }
 
