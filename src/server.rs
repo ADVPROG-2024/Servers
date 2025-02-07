@@ -1,6 +1,3 @@
-mod communication_server;
-mod content_server;
-
 use std::collections::HashMap;
 use std::fmt::Display;
 use dronegowski_utils::hosts::{ServerCommand, ServerEvent, ServerMessages, ServerType};
@@ -27,11 +24,11 @@ pub trait DronegowskiServer {
 
 fn main() {
     // creazione del Server
-    let mut communication_server = CommunicationServer::new(generate_unique_id() as NodeId);
+    //let mut communication_server = CommunicationServer::new(generate_unique_id() as NodeId);
 
     let mut content_server = ContentServer::new(generate_unique_id() as NodeId);
 
     let mut handles = Vec::new();
 
-    handles.push(thread::spawn(move || communication_server.run()));
+    //handles.push(thread::spawn(move || communication_server.run()));
 }
