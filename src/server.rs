@@ -8,7 +8,7 @@ use std::thread;
 use crossbeam_channel::{Receiver, Sender};
 use serde::de::DeserializeOwned;
 use crate::communication_server::CommunicationServer;
-use crate::content_server::ContentServer;
+//use crate::content_server::ContentServer;
 
 pub trait DronegowskiServer {
     fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType) -> Self;
@@ -26,7 +26,6 @@ fn main() {
     // creazione del Server
     //let mut communication_server = CommunicationServer::new(generate_unique_id() as NodeId);
 
-    let mut content_server = ContentServer::new(generate_unique_id() as NodeId);
 
     let mut handles = Vec::new();
 
