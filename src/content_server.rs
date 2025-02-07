@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{assembler, fragment_message};
 use dronegowski_utils::hosts::{ClientMessages, ServerCommand, ServerEvent, ServerMessages, ServerType, TestMessage};
-use wg_2024::network::NodeId;
-use wg_2024::packet::{Fragment, NodeType, Packet, PacketType};
+use wg_2024::network::{NodeId, SourceRoutingHeader};
+use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
 use crate::DronegowskiServer;
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
@@ -97,66 +98,67 @@ impl DronegowskiServer for ContentServer {
     }
 
     fn handle_packet(&mut self, packet: Packet){
-        let client_id = packet.routing_header.hops[0];
-        let key = packet.session_id;
-        match packet.pack_type {
-            PacketType::MsgFragment(fragment) => {
-                self.message_storage
-                    .entry(key)
-                    .or_insert_with(Vec::new)
-                    .push(fragment);
+        if let Some(source_id) = packet.routing_header.source(){
+            let key = packet.session_id;
+            match packet.pack_type {
+                PacketType::MsgFragment(fragment) => {
+                    self.message_storage
+                        .entry(key)
+                        .or_insert_with(Vec::new)
+                        .push(fragment);
 
-                // Check if all the fragments are received
-                if let Some(fragments) = self.message_storage.get(&key) {
-                    if let Some(first_fragment) = fragments.first() {
-                        if fragments.len() as u64 == first_fragment.total_n_fragments {
-                            match self.reconstruct_message(key) {
-                                Ok(message) => {
-                                    if let TestMessage::WebServerMessages(client_messages) = message {
-                                        match client_messages {
-                                            ClientMessages::ServerType =>{
-                                                self.send_message(ServerMessages::ServerType(ServerType::Content), client_id);
-                                            },
-                                            ClientMessages::FilesList =>{
-                                                let list = self.list_files();
-                                                self.send_message(ServerMessages::FilesList(list), client_id);
-                                            },
-                                            ClientMessages::File(file_id) =>{
-                                                match self.get_file_text(file_id) {
-                                                    Some(text) => {self.send_message(ServerMessages::File(text), client_id);},
-                                                    None => {self.send_message(ServerMessages::Error("file not found".to_string()),client_id)},
-                                                }
-                                            },
-                                            ClientMessages::Media(media_id) =>{
-                                                match self.get_media(media_id) {
-                                                    Some(media) => self.send_message(ServerMessages::Media(media), client_id),
-                                                    None => {self.send_message(ServerMessages::Error("media not found".to_string()),client_id)},
-                                                }
-                                            },
-                                            _ => {println!("Unkown message type");},
+                    // Check if all the fragments are received
+                    if let Some(fragments) = self.message_storage.get(&key) {
+                        if let Some(first_fragment) = fragments.first() {
+                            if fragments.len() as u64 == first_fragment.total_n_fragments {
+                                match self.reconstruct_message(key) {
+                                    Ok(message) => {
+                                        if let TestMessage::WebServerMessages(client_messages) = message {
+                                            match client_messages {
+                                                ClientMessages::ServerType =>{
+                                                    self.send_message(ServerMessages::ServerType(ServerType::Content), source_id);
+                                                },
+                                                ClientMessages::FilesList =>{
+                                                    let list = self.list_files();
+                                                    self.send_message(ServerMessages::FilesList(list), source_id);
+                                                },
+                                                ClientMessages::File(file_id) =>{
+                                                    match self.get_file_text(file_id) {
+                                                        Some(text) => {self.send_message(ServerMessages::File(text), source_id);},
+                                                        None => {self.send_message(ServerMessages::Error("file not found".to_string()),source_id)},
+                                                    }
+                                                },
+                                                ClientMessages::Media(media_id) =>{
+                                                    match self.get_media(media_id) {
+                                                        Some(media) => self.send_message(ServerMessages::Media(media), source_id),
+                                                        None => {self.send_message(ServerMessages::Error("media not found".to_string()),source_id)},
+                                                    }
+                                                },
+                                                _ => {println!("Unkown message type");},
+                                            }
                                         }
                                     }
-                                }
-                                Err(e) => {
-                                    println!("Error reconstructing the message: {}", e);
+                                    Err(e) => {
+                                        println!("Error reconstructing the message: {}", e);
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-            PacketType::FloodResponse(flood_response) => {
-                // update the graph knowledge based on the new FloodResponse
-                self.update_graph(flood_response.path_trace);
-            }
-            PacketType::Ack(ack) => {
-                //gestire ack
-            }
-            PacketType::Nack(nack) => {
-                //gestire nack
-            }
-            _ => {
-                println!("Unhandled packet type");
+                PacketType::FloodResponse(flood_response) => {
+                    // update the graph knowledge based on the new FloodResponse
+                    self.update_graph(flood_response.path_trace);
+                }
+                PacketType::FloodRequest(mut flood_request) => {
+                    self.send_flood_response(flood_request, packet.clone());
+                }
+                PacketType::Ack(ack) => {
+                    //gestire ack
+                }
+                PacketType::Nack(nack) => {
+                    //gestire nack
+                }
             }
         }
     }
@@ -273,6 +275,39 @@ impl DronegowskiServer for ContentServer {
 }
 
 impl ContentServer {
+
+    fn send_flood_response(&mut self, mut flood_request: FloodRequest, packet: Packet) {
+        flood_request.path_trace.push((self.id, NodeType::Server));
+
+        let flood_response = FloodResponse {
+            flood_id: flood_request.flood_id,
+            path_trace: flood_request.path_trace.clone(),
+        };
+
+        let source_id = packet.routing_header.source().expect("FloodRequest must have a source");
+
+        let response_packet = Packet {
+            pack_type: PacketType::FloodResponse(flood_response),
+            routing_header: SourceRoutingHeader {
+                hop_index: 0, // Reset hop_index
+                hops: flood_request.path_trace.iter().rev().map(|(id, _)| *id).collect(),
+            },
+            session_id: packet.session_id,
+        };
+
+        if let Some(sender) = self.packet_send.get(&source_id) {
+            match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
+                Err(_) => {
+                    log::warn!("ContentServer {}: Timeout sending packet to {}", self.id, source_id);
+                }
+                Ok(..)=>{
+                    log::info!("ContentServer {}: Sent FloodResponse back to {}", self.id, source_id);
+                }
+            }
+        } else {
+            log::warn!("ContentServer {}: No sender found for node {}", self.id, source_id);
+        }
+    }
 
     fn handle_command(&mut self, command: ServerCommand) {
         log::info!("ContentServer {}: Received ServerCommand: {:?}", self.id, command);

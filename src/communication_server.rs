@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::time::Duration;
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{assembler, fragment_message};
 use dronegowski_utils::hosts::{ClientMessages, ServerCommand, ServerEvent, ServerMessages, ServerType, TestMessage};
 use serde::de::DeserializeOwned;
-use wg_2024::network::NodeId;
-use wg_2024::packet::{Fragment, NodeType, Packet, PacketType};
+use wg_2024::network::{NodeId, SourceRoutingHeader};
+use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
 use crate::DronegowskiServer;
 
 #[derive(Clone)]
@@ -112,6 +113,9 @@ impl DronegowskiServer for CommunicationServer {
             PacketType::FloodResponse(flood_response) => {
                 // Gestisce la risposta di flooding aggiornando il grafo
                 self.update_graph(flood_response.path_trace);
+            }
+            PacketType::FloodRequest(mut flood_request) => {
+                self.send_flood_response(flood_request, packet.clone());
             }
             PacketType::Ack(ack) => {
                 //gestire ack
@@ -237,6 +241,40 @@ impl CommunicationServer {
             self.send_message(ServerMessages::ServerType(self.clone().server_type), best_path);
         }
     }
+
+    fn send_flood_response(&mut self, mut flood_request: FloodRequest, packet: Packet) {
+        flood_request.path_trace.push((self.id, NodeType::Server));
+
+        let flood_response = FloodResponse {
+            flood_id: flood_request.flood_id,
+            path_trace: flood_request.path_trace.clone(),
+        };
+
+        let source_id = packet.routing_header.source().expect("FloodRequest must have a source");
+
+        let response_packet = Packet {
+            pack_type: PacketType::FloodResponse(flood_response),
+            routing_header: SourceRoutingHeader {
+                hop_index: 0, // Reset hop_index
+                hops: flood_request.path_trace.iter().rev().map(|(id, _)| *id).collect(),
+            },
+            session_id: packet.session_id,
+        };
+
+        if let Some(sender) = self.packet_send.get(&source_id) {
+            match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
+                Err(_) => {
+                    log::warn!("CommunicationServer {}: Timeout sending packet to {}", self.id, source_id);
+                }
+                Ok(..)=>{
+                    log::info!("CommunicationServer {}: Sent FloodResponse back to {}", self.id, source_id);
+                }
+            }
+        } else {
+            log::warn!("CommunicationServer {}: No sender found for node {}", self.id, source_id);
+        }
+    }
+
     fn register_client(&mut self, client_id: NodeId) {
         self.registered_client.push(client_id.clone());
     }
