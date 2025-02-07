@@ -134,7 +134,7 @@ impl DronegowskiServer for CommunicationServer {
                 // Gestisce la risposta di flooding aggiornando il grafo
                 self.update_graph(flood_response.path_trace);
             }
-            PacketType::FloodRequest(mut flood_request) => {
+            PacketType::FloodRequest(ref mut flood_request) => {
                 self.send_flood_response(flood_request, packet.clone());
             }
             PacketType::Ack(ack) => {
@@ -262,7 +262,7 @@ impl CommunicationServer {
         }
     }
 
-    fn send_flood_response(&mut self, mut flood_request: FloodRequest, packet: Packet) {
+    fn send_flood_response(&mut self, flood_request:  &mut FloodRequest, packet: Packet) {
         flood_request.path_trace.push((self.id, NodeType::Server));
 
         let flood_response = FloodResponse {
