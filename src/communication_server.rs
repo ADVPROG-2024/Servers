@@ -179,21 +179,17 @@ impl DronegowskiServer for CommunicationServer {
         }
     }
 
-    fn send_message(&mut self, message: ServerMessages, route: Vec<NodeId>) {
-        if let Some(&neighbour_id) = route.first() {
-            if let Some(sender) = self.packet_send.get(&neighbour_id) {
-                let serialized_data = bincode::serialize(&message).expect("Serialization failed");
-                let packets = fragment_message(&serialized_data, route, 1);
-
-                for mut packet in packets {
-                    packet.routing_header.hop_index = 1;
-                    sender.send(packet).expect("Errore durante l'invio del pacchetto al neighbour.");
-                }
-            } else {
-                println!("Errore: Neighbour con NodeId {} non trovato!", neighbour_id);
+    fn handle_command(&mut self, command: ServerCommand) {
+        match command {
+            ServerCommand::AddSender(id, sender) => {
+                self.add_neighbor(id, sender);
             }
-        } else {
-            println!("Errore: Route vuota, impossibile determinare il neighbour!");
+            ServerCommand::RemoveSender(id) => {
+                self.remove_neighbor(id);
+            }
+            _ =>{
+                // Unclassified Command
+            }
         }
     }
 
@@ -283,14 +279,56 @@ impl DronegowskiServer for CommunicationServer {
             Err(format!("Nessun frammento trovato per la chiave: {}", key).into())
         }
     }
+        fn add_neighbor(&mut self, node_id: NodeId, sender: Sender<Packet>) {
+            if let std::collections::hash_map::Entry::Vacant(e) = self.packet_send.entry(node_id) {
+                e.insert(sender);
+                self.network_discovery()
+            } else {
+                panic!("Sender for node {node_id} already stored in the map!");
+            }
+        }
+    fn remove_neighbor(&mut self, node_id: NodeId) {
+        if self.packet_send.contains_key(&node_id) {
+            self.packet_send.remove(&node_id);
+            self.remove_from_topology(node_id);
+            self.network_discovery();
+        } else {
+            panic!("the {} is not neighbour of the drone {}", node_id, self.id);
+        }
+    }
+    fn remove_from_topology(&mut self, node_id: NodeId) {
+        self.topology.retain(|&(a, b)| a != node_id && b != node_id);
+        self.node_types.remove(&node_id);
+    }
 }
 
 impl CommunicationServer {
+    fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType) -> Self {
+
+        let mut server = Self {
+            id,
+            sim_controller_send,
+            sim_controller_recv,
+            packet_recv,
+            packet_send,
+            server_type,
+            message_storage: HashMap::new(),
+            topology: HashSet::new(),
+            node_types: HashMap::new(),
+            registered_client: Vec::new(),
+        };
+
+        server.network_discovery();
+
+        server
+    }
+
     fn send_my_type(&mut self, client_id: NodeId) {
         if let Some(best_path) = self.compute_best_path(client_id) {
             self.send_message(ServerMessages::ServerType(self.clone().server_type), best_path);
         }
     }
+
 
     fn register_client(&mut self, client_id: NodeId) {
         if let Some(path) = self.compute_best_path(client_id) {
@@ -317,59 +355,22 @@ impl CommunicationServer {
         }
     }
 
-    fn add_neighbor(&mut self, node_id: NodeId, sender: Sender<Packet>) {
-        if let std::collections::hash_map::Entry::Vacant(e) = self.packet_send.entry(node_id) {
-            e.insert(sender);
-            self.network_discovery()
+    fn send_message(&mut self, message: ServerMessages, route: Vec<NodeId>) {
+        if let Some(&neighbour_id) = route.first() {
+            if let Some(sender) = self.packet_send.get(&neighbour_id) {
+                let serialized_data = bincode::serialize(&message).expect("Serialization failed");
+                let packets = fragment_message(&serialized_data, route, 1);
+
+                for mut packet in packets {
+                    packet.routing_header.hop_index = 1;
+                    sender.send(packet).expect("Errore durante l'invio del pacchetto al neighbour.");
+                }
+            } else {
+                println!("Errore: Neighbour con NodeId {} non trovato!", neighbour_id);
+            }
         } else {
-            panic!("Sender for node {node_id} already stored in the map!");
-        }
-    }
-    fn remove_from_topology(&mut self, node_id: NodeId) {
-        self.topology.retain(|&(a, b)| a != node_id && b != node_id);
-        self.node_types.remove(&node_id);
-    }
-    fn remove_neighbor(&mut self, node_id: NodeId) {
-        if self.packet_send.contains_key(&node_id) {
-            self.packet_send.remove(&node_id);
-            self.remove_from_topology(node_id);
-            self.network_discovery();
-        } else {
-            panic!("the {} is not neighbour of the drone {}", node_id, self.id);
+            println!("Errore: Route vuota, impossibile determinare il neighbour!");
         }
     }
 
-    fn handle_command(&mut self, command: Command) {
-        match command {
-            ServerCommand::AddSender(id, sender) => {
-                self.add_neighbor(id, sender);
-            }
-            ServerCommand::RemoveSender(id) => {
-                self.remove_neighbor(id);
-            }
-            _ =>{
-                // Unclassified Command
-            }
-        }
-    }
-
-    fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType) -> Self {
-
-        let mut server = Self {
-            id,
-            sim_controller_send,
-            sim_controller_recv,
-            packet_recv,
-            packet_send,
-            server_type,
-            message_storage: HashMap::new(),
-            topology: HashSet::new(),
-            node_types: HashMap::new(),
-            registered_client: Vec::new(),
-        };
-
-        server.network_discovery();
-
-        server
-    }
 }
