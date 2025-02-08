@@ -76,14 +76,14 @@ impl DronegowskiServer for CommunicationServer {
         let key = packet.session_id; // Identifica la sessione
         match packet.pack_type {
             PacketType::MsgFragment(fragment) => {
-                log::info!("CommuncationServer {}: Received MsgFragment from {}, session: {}, index: {}, total: {}",self.id, client_id, key, fragment.clone().fragment_index, fragment.total_n_fragments);
+                //log::info!("CommuncationServer {}: Received MsgFragment from {}, session: {}, index: {}, total: {}",self.id, client_id, key, fragment.clone().fragment_index, fragment.total_n_fragments);
 
                 // Aggiunta del frammento al message_storage
                 self.message_storage
                     .entry(key)
                     .or_insert_with(Vec::new)
                     .push(fragment.clone());
-                log::info!("CommunicationServer {}: fragment {} added to message storage", self.id, fragment.clone().fragment_index);
+                //log::info!("CommunicationServer {}: fragment {} added to message storage", self.id, fragment.clone().fragment_index);
 
                 // Verifica se tutti i frammenti sono stati ricevuti
                 if let Some(fragments) = self.message_storage.get(&key) {
