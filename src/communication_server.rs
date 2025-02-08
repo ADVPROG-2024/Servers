@@ -25,25 +25,6 @@ pub struct CommunicationServer {
 }
 
 impl DronegowskiServer for CommunicationServer {
-    fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType) -> Self {
-
-        let mut server = Self {
-            id,
-            sim_controller_send,
-            sim_controller_recv,
-            packet_recv,
-            packet_send,
-            server_type,
-            message_storage: HashMap::new(),
-            topology: HashSet::new(),
-            node_types: HashMap::new(),
-            registered_client: Vec::new(),
-        };
-
-        server.network_discovery();
-
-        server
-    }
 
     fn run(&mut self) {
         loop {
@@ -370,5 +351,25 @@ impl CommunicationServer {
                 // Unclassified Command
             }
         }
+    }
+
+    fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType) -> Self {
+
+        let mut server = Self {
+            id,
+            sim_controller_send,
+            sim_controller_recv,
+            packet_recv,
+            packet_send,
+            server_type,
+            message_storage: HashMap::new(),
+            topology: HashSet::new(),
+            node_types: HashMap::new(),
+            registered_client: Vec::new(),
+        };
+
+        server.network_discovery();
+
+        server
     }
 }
