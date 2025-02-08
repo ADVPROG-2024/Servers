@@ -127,6 +127,7 @@ impl DronegowskiServer for CommunicationServer {
                 self.update_graph(flood_response.path_trace);
             }
             PacketType::FloodRequest(flood_request) => { // Non più mut flood_request
+                log::info!("CommunicationServer {}: Received FloodRequest {:?}", self.id, flood_request);
                 // 1. Update the graph *immediately*.
                 self.update_graph(flood_request.path_trace.clone());
 
@@ -151,18 +152,18 @@ impl DronegowskiServer for CommunicationServer {
                 };
 
                 // 5. Send the response back to the source.
-                let source_id = packet.routing_header.source().expect("FloodRequest must have source");
-                if let Some(sender) = self.packet_send.get(&source_id) {
+                let next_node = packet.routing_header.hops[1];
+                if let Some(sender) = self.packet_send.get(&next_node) {
                             match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
                                 Err(_) => {
-                                    log::warn!("CommunicationServer {}: Timeout sending packet to {}", self.id, source_id);
+                                    log::warn!("CommunicationServer {}: Timeout sending packet to {}", self.id, next_node);
                                 }
                                 Ok(..)=>{
-                                    log::info!("CommunicationServer {}: Sent FloodResponse back to {}", self.id, source_id);
+                                    log::info!("CommunicationServer {}: Sent FloodResponse back to {}", self.id, next_node);
                                 }
                             }
                         } else {
-                            log::warn!("CommunicationServer {}: No sender found for node {}", self.id, source_id);
+                            log::warn!("CommunicationServer {}: No sender found for node {}", self.id, next_node);
                         }
 
             }
