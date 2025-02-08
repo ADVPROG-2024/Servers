@@ -152,7 +152,7 @@ impl DronegowskiServer for CommunicationServer {
                 };
 
                 // 5. Send the response back to the source.
-                let next_node = packet.routing_header.hops[1];
+                let next_node = packet.routing_header.hops[0];
                 if let Some(sender) = self.packet_send.get(&next_node) {
                             match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
                                 Err(_) => {
