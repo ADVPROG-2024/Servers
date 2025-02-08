@@ -305,10 +305,6 @@ impl CommunicationServer {
         }
     }
 
-    fn send_flood_response(&mut self, flood_request:  &mut FloodRequest, packet: Packet) {
-
-    }
-
     fn register_client(&mut self, client_id: NodeId) {
         if let Some(path) = self.compute_best_path(client_id) {
             if self.registered_client.contains(&client_id) {
@@ -337,15 +333,20 @@ impl CommunicationServer {
     fn add_neighbor(&mut self, node_id: NodeId, sender: Sender<Packet>) {
         if let std::collections::hash_map::Entry::Vacant(e) = self.packet_send.entry(node_id) {
             e.insert(sender);
-
+            self.network_discovery()
         } else {
             panic!("Sender for node {node_id} already stored in the map!");
         }
     }
+    fn remove_from_topology(&mut self, node_id: NodeId) {
+        self.topology.retain(|&(a, b)| a != node_id && b != node_id);
+        self.node_types.remove(&node_id);
+    }
     fn remove_neighbor(&mut self, node_id: NodeId) {
         if self.packet_send.contains_key(&node_id) {
             self.packet_send.remove(&node_id);
-            // send a FloodRequest?
+            self.remove_from_topology(node_id);
+            self.network_discovery();
         } else {
             panic!("the {} is not neighbour of the drone {}", node_id, self.id);
         }
