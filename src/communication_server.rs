@@ -5,6 +5,7 @@ use std::time::Duration;
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{assembler, fragment_message, generate_unique_id};
 use dronegowski_utils::hosts::{ClientMessages, ServerCommand, ServerEvent, ServerMessages, ServerType, TestMessage};
+use dronegowski_utils::hosts::ServerType::Communication;
 use log::{info, log};
 use serde::de::DeserializeOwned;
 use wg_2024::network::{NodeId, SourceRoutingHeader};
@@ -388,7 +389,7 @@ impl CommunicationServer {
             log::info!("Communication server {}: sending packet to {}", self.id, neighbour_id);
             if let Some(sender) = self.packet_send.get(&neighbour_id) {
                 //let serialized_data = bincode::serialize(&message).expect("Serialization failed");
-                let packets = fragment_message(&message, route, 1);
+                let packets = fragment_message(&ServerMessages::ServerType(Communication), route, 1);
 
                 for mut packet in packets {
                     packet.routing_header.hop_index = 1;
