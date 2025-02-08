@@ -135,18 +135,20 @@ impl DronegowskiServer for CommunicationServer {
                 self.update_graph(flood_response.path_trace);
             }
             PacketType::FloodRequest(flood_request) => { // Non più mut flood_request
-                // Aggiungi il server ALLA FINE, solo per la risposta.
-                let mut updated_path_trace = flood_request.path_trace.clone();
-                updated_path_trace.push((self.id, NodeType::Server));
-
-
+                // 1. Update the graph *immediately*.
+                self.update_graph(flood_request.path_trace.clone());
+        
+                // 2. Create a *new* path trace for the response.  This includes the server.
+                let mut response_path_trace = flood_request.path_trace.clone();
+                response_path_trace.push((self.id, NodeType::Server));
+        
+                // 3. Create the FloodResponse.
                 let flood_response = FloodResponse {
                     flood_id: flood_request.flood_id,
-                    path_trace: updated_path_trace, // Usa la path_trace aggiornata
+                    path_trace: response_path_trace,  // Use the *new* path trace.
                 };
-
-                let source_id = packet.routing_header.source().expect("FloodRequest must have a source");
-
+        
+                // 4. Create the response packet.  Reverse the *original* path for routing.
                 let response_packet = Packet {
                     pack_type: PacketType::FloodResponse(flood_response),
                     routing_header: SourceRoutingHeader {
@@ -155,21 +157,22 @@ impl DronegowskiServer for CommunicationServer {
                     },
                     session_id: packet.session_id,
                 };
-                // Aggiorna il grafo PRIMA di inviare la risposta.  Questo è cruciale.
-                self.update_graph(flood_request.path_trace.clone());
+        
+                // 5. Send the response back to the source.
+                let source_id = packet.routing_header.source().expect("FloodRequest must have source");
+                 if let Some(sender) = self.packet_send.get(&source_id) {
+                            match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
+                                Err(_) => {
+                                    log::warn!("CommunicationServer {}: Timeout sending packet to {}", self.id, source_id);
+                                }
+                                Ok(..)=>{
+                                    log::info!("CommunicationServer {}: Sent FloodResponse back to {}", self.id, source_id);
+                                }
+                            }
+                        } else {
+                            log::warn!("CommunicationServer {}: No sender found for node {}", self.id, source_id);
+                        }
 
-                if let Some(sender) = self.packet_send.get(&source_id) {
-                    match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
-                        Err(_) => {
-                            log::warn!("CommunicationServer {}: Timeout sending packet to {}", self.id, source_id);
-                        }
-                        Ok(..) => {
-                            log::info!("CommunicationServer {}: Sent FloodResponse back to {}", self.id, source_id);
-                        }
-                    }
-                } else {
-                    log::warn!("CommunicationServer {}: No sender found for node {}", self.id, source_id);
-                }
             }
 
             PacketType::Ack(ack) => {
