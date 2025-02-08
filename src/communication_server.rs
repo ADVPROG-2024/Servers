@@ -333,4 +333,21 @@ impl CommunicationServer {
             self.send_message(final_message, hops);
         }
     }
+
+    fn add_neighbor(&mut self, node_id: NodeId, sender: Sender<Packet>) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.packet_send.entry(node_id) {
+            e.insert(sender);
+
+        } else {
+            panic!("Sender for node {node_id} already stored in the map!");
+        }
+    }
+    fn remove_neighbor(&mut self, node_id: NodeId) {
+        if self.packet_send.contains_key(&node_id) {
+            self.packet_send.remove(&node_id);
+            // send a FloodRequest?
+        } else {
+            panic!("the {} is not neighbour of the drone {}", node_id, self.id);
+        }
+    }
 }
