@@ -31,11 +31,13 @@ impl DronegowskiServer for CommunicationServer {
         loop {
             select_biased! {
                 recv(self.packet_recv) -> packet_res => {
+                    log::info!("CommuncationServer {}: Received packet {:?}", self.id, packet_res);
                     if let Ok(packet) = packet_res {
                         self.handle_packet(packet);
                     }
                 },
                 recv(self.sim_controller_recv) -> command_res => {
+                    log::info!("CommuncationServer {}: Received command {:?}", self.id, command_res);
                     if let Ok(command) = command_res {
                         self.handle_command(command);
                     }
