@@ -35,10 +35,10 @@ impl DronegowskiServer for CommunicationServer {
                     }
                 },
                 recv(self.sim_controller_recv) -> command_res => {
-                     if let Ok(command) = command_res {
-                         self.handle_command(command);
-                     }
-                 }
+                    if let Ok(command) = command_res {
+                        self.handle_command(command);
+                    }
+                }
             }
         }
     }
@@ -152,7 +152,7 @@ impl DronegowskiServer for CommunicationServer {
 
                 // 5. Send the response back to the source.
                 let source_id = packet.routing_header.source().expect("FloodRequest must have source");
-                 if let Some(sender) = self.packet_send.get(&source_id) {
+                if let Some(sender) = self.packet_send.get(&source_id) {
                             match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
                                 Err(_) => {
                                     log::warn!("CommunicationServer {}: Timeout sending packet to {}", self.id, source_id);
@@ -303,7 +303,7 @@ impl DronegowskiServer for CommunicationServer {
 }
 
 impl CommunicationServer {
-    fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType) -> Self {
+    pub fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType) -> Self {
 
         let mut server = Self {
             id,
