@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::process::Command;
 use std::time::Duration;
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{assembler, fragment_message, generate_unique_id};
@@ -51,7 +52,12 @@ impl DronegowskiServer for CommunicationServer {
                     if let Ok(packet) = packet_res {
                         self.handle_packet(packet);
                     }
-                }
+                },
+                recv(self.sim_controller_recv) -> command_res => {
+                     if let Ok(command) = command_res {
+                         self.handle_command(command);
+                     }
+                 }
             }
         }
     }
@@ -349,6 +355,20 @@ impl CommunicationServer {
             self.network_discovery();
         } else {
             panic!("the {} is not neighbour of the drone {}", node_id, self.id);
+        }
+    }
+
+    fn handle_command(&mut self, command: Command) {
+        match command {
+            ServerCommand::AddSender(id, sender) => {
+                self.add_neighbor(id, sender);
+            }
+            ServerCommand::RemoveSender(id) => {
+                self.remove_neighbor(id);
+            }
+            _ =>{
+                // Unclassified Command
+            }
         }
     }
 }
