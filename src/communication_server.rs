@@ -385,6 +385,7 @@ impl CommunicationServer {
 
     fn send_message(&mut self, message: ServerMessages, route: Vec<NodeId>) {
         if let Some(&neighbour_id) = route.first() {
+            log::info!("Communication server {}: sending packet to {}", self.id, neighbour_id);
             if let Some(sender) = self.packet_send.get(&neighbour_id) {
                 //let serialized_data = bincode::serialize(&message).expect("Serialization failed");
                 let packets = fragment_message(&message, route, 1);
