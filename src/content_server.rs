@@ -180,7 +180,36 @@ impl DronegowskiServer for ContentServer {
                     self.update_graph(flood_response.path_trace);
                 }
                 PacketType::FloodRequest(mut flood_request) => {
-                    self.send_flood_response(flood_request, packet.clone());
+                    flood_request.path_trace.push((self.id, NodeType::Server));
+
+                    let flood_response = FloodResponse {
+                        flood_id: flood_request.flood_id,
+                        path_trace: flood_request.path_trace.clone(),
+                    };
+
+                    let source_id = packet.routing_header.source().expect("FloodRequest must have a source");
+
+                    let response_packet = Packet {
+                        pack_type: PacketType::FloodResponse(flood_response),
+                        routing_header: SourceRoutingHeader {
+                            hop_index: 0, // Reset hop_index
+                            hops: flood_request.path_trace.iter().rev().map(|(id, _)| *id).collect(),
+                        },
+                        session_id: packet.session_id,
+                    };
+
+                    if let Some(sender) = self.packet_send.get(&source_id) {
+                        match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
+                            Err(_) => {
+                                log::warn!("ContentServer {}: Timeout sending packet to {}", self.id, source_id);
+                            }
+                            Ok(..)=>{
+                                log::info!("ContentServer {}: Sent FloodResponse back to {}", self.id, source_id);
+                            }
+                        }
+                    } else {
+                        log::warn!("ContentServer {}: No sender found for node {}", self.id, source_id);
+                    }
                 }
                 PacketType::Ack(ack) => {
                     //gestire ack
@@ -193,7 +222,7 @@ impl DronegowskiServer for ContentServer {
     }
     fn reconstruct_message<T: DeserializeOwned>(&mut self, key: u64) -> Result<T, Box<dyn std::error::Error>> {
         // Identifica il vettore di frammenti associato alla chiave
-        if let Some(fragments) = self.message_storage.get(&key) {
+        if let Some(fragments) = self.message_storage.clone().get(&key) {
             if let Some(first_fragment) = fragments.first() {
                 if fragments.len() as u64 == first_fragment.total_n_fragments {
                     self.message_storage.remove(&key);
@@ -237,25 +266,6 @@ impl DronegowskiServer for ContentServer {
 
 
     // message sending methods
-    fn send_message(&mut self, message: ServerMessages, destination: NodeId) {
-        let route=self.compute_best_path(destination).unwrap_or(Vec::new());
-
-        if let Some(&neighbour_id) = route.first() {
-            if let Some(sender) = self.packet_send.get(&neighbour_id) {
-                let serialized_data = bincode::serialize(&message).expect("Serialization failed");
-                let packets = fragment_message(&serialized_data, route, 1);
-
-                for mut packet in packets {
-                    packet.routing_header.hop_index = 1;
-                    sender.send(packet).expect("Error occurred sending the message to the neighbour.");
-                }
-            } else {
-                println!("Error: Neighbour {} not found!", neighbour_id);
-            }
-        } else {
-            println!("Error: There is no available route");
-        }
-    }
     fn compute_best_path(&self, target_client: NodeId) -> Option<Vec<NodeId>> {
         use std::collections::VecDeque;
 
@@ -288,6 +298,41 @@ impl DronegowskiServer for ContentServer {
     }
 
 
+    // sc commands methods
+    fn handle_command(&mut self, command: ServerCommand) {
+        match command {
+            ServerCommand::AddSender(id, sender) => {
+                self.add_neighbor(id, sender);
+            }
+            ServerCommand::RemoveSender(id) => {
+                self.remove_neighbor(id);
+            }
+            _ =>{
+                // Unclassified Command
+            }
+        }
+    }
+    fn add_neighbor(&mut self, node_id: NodeId, sender: Sender<Packet>) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.packet_send.entry(node_id) {
+            e.insert(sender);
+            self.network_discovery()
+        } else {
+            panic!("Sender for node {node_id} already stored in the map!");
+        }
+    }
+    fn remove_from_topology(&mut self, node_id: NodeId) {
+        self.topology.retain(|&(a, b)| a != node_id && b != node_id);
+        self.node_types.remove(&node_id);
+    }
+    fn remove_neighbor(&mut self, node_id: NodeId) {
+        if self.packet_send.contains_key(&node_id) {
+            self.packet_send.remove(&node_id);
+            self.remove_from_topology(node_id);
+            self.network_discovery();
+        } else {
+            panic!("the {} is not neighbour of the drone {}", node_id, self.id);
+        }
+    }
 
 
     // network discovery related methods
@@ -353,68 +398,24 @@ impl ContentServer {
     }
 
 
-    // network related methods
-    fn send_flood_response(&mut self, mut flood_request: FloodRequest, packet: Packet) {
-        flood_request.path_trace.push((self.id, NodeType::Server));
+    //message sending_method
+    fn send_message(&mut self, message: ServerMessages, destination: NodeId) {
+        let route=self.compute_best_path(destination).unwrap_or(Vec::new());
 
-        let flood_response = FloodResponse {
-            flood_id: flood_request.flood_id,
-            path_trace: flood_request.path_trace.clone(),
-        };
+        if let Some(&neighbour_id) = route.first() {
+            if let Some(sender) = self.packet_send.get(&neighbour_id) {
+                let serialized_data = bincode::serialize(&message).expect("Serialization failed");
+                let packets = fragment_message(&serialized_data, route, 1);
 
-        let source_id = packet.routing_header.source().expect("FloodRequest must have a source");
-
-        let response_packet = Packet {
-            pack_type: PacketType::FloodResponse(flood_response),
-            routing_header: SourceRoutingHeader {
-                hop_index: 0, // Reset hop_index
-                hops: flood_request.path_trace.iter().rev().map(|(id, _)| *id).collect(),
-            },
-            session_id: packet.session_id,
-        };
-
-        if let Some(sender) = self.packet_send.get(&source_id) {
-            match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
-                Err(_) => {
-                    log::warn!("ContentServer {}: Timeout sending packet to {}", self.id, source_id);
+                for mut packet in packets {
+                    packet.routing_header.hop_index = 1;
+                    sender.send(packet).expect("Error occurred sending the message to the neighbour.");
                 }
-                Ok(..)=>{
-                    log::info!("ContentServer {}: Sent FloodResponse back to {}", self.id, source_id);
-                }
+            } else {
+                println!("Error: Neighbour {} not found!", neighbour_id);
             }
         } else {
-            log::warn!("ContentServer {}: No sender found for node {}", self.id, source_id);
-        }
-    }
-    fn handle_command(&mut self, command: ServerCommand) {
-        log::info!("ContentServer {}: Received ServerCommand: {:?}", self.id, command);
-
-        match command {
-            ServerCommand::AddSender(id, sender) => {
-                self.add_neighbor(id, sender);
-            }
-            ServerCommand::RemoveSender(id) => {
-                self.remove_neighbor(id);
-            }
-            _ =>{
-                // Unclassified Command
-            }
-        }
-    }
-    fn add_neighbor(&mut self, node_id: NodeId, sender: Sender<Packet>) {
-        if let std::collections::hash_map::Entry::Vacant(e) = self.packet_send.entry(node_id) {
-            e.insert(sender);
-            // send a FloodRequest
-        } else {
-            panic!("Sender for node {node_id} already stored in the map!");
-        }
-    }
-    fn remove_neighbor(&mut self, node_id: NodeId) {
-        if self.packet_send.contains_key(&node_id) {
-            self.packet_send.remove(&node_id);
-            // send a FloodRequest?
-        } else {
-            panic!("the {} is not neighbour of the drone {}", node_id, self.id);
+            println!("Error: There is no available route");
         }
     }
 
