@@ -409,8 +409,8 @@ impl ContentServer {
 
         if let Some(&neighbour_id) = route.first() {
             if let Some(sender) = self.packet_send.get(&neighbour_id) {
-                let serialized_data = bincode::serialize(&message).expect("Serialization failed");
-                let packets = fragment_message(&serialized_data, route, 1);
+
+                let packets = fragment_message(&TestMessage::WebClientMessages(message), route, 1);
 
                 for mut packet in packets {
                     packet.routing_header.hop_index = 1;
