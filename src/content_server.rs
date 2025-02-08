@@ -4,6 +4,7 @@ use std::time::Duration;
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{assembler, fragment_message, generate_unique_id};
 use dronegowski_utils::hosts::{ClientMessages, FileContent, ServerCommand, ServerEvent, ServerMessages, ServerType, TestMessage};
+use log::log;
 use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
 use crate::DronegowskiServer;
@@ -127,6 +128,7 @@ impl DronegowskiServer for ContentServer {
 
     // packet receiving
     fn handle_packet(&mut self, packet: Packet){
+        log::info!("ContentServer {}: Received packet {:?}", self.id, packet);
         if let Some(source_id) = packet.routing_header.source(){
             let key = packet.session_id;
             match packet.pack_type {
@@ -134,8 +136,8 @@ impl DronegowskiServer for ContentServer {
                     self.message_storage
                         .entry(key)
                         .or_insert_with(Vec::new)
-                        .push(fragment);
-
+                        .push(fragment.clone());
+                    log::info!("fragment {} add to message storage", fragment.fragment_index);
                     // Check if all the fragments are received
                     if let Some(fragments) = self.message_storage.get(&key) {
                         if let Some(first_fragment) = fragments.first() {
@@ -163,12 +165,12 @@ impl DronegowskiServer for ContentServer {
                                                         None => {self.send_message(ServerMessages::Error("media not found".to_string()),source_id)},
                                                     }
                                                 },
-                                                _ => {println!("Unkown message type");},
+                                                _ => {log::error!("Unkown message type");},
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        println!("Error reconstructing the message: {}", e);
+                                        log::error!("Error reconstructing the message: {}", e);
                                     }
                                 }
                             }
@@ -176,10 +178,13 @@ impl DronegowskiServer for ContentServer {
                     }
                 }
                 PacketType::FloodResponse(flood_response) => {
+                    log::info!(
+                    "ContentServer {}: Received FloodResponse: {:?}", self.id, flood_response);
                     // update the graph knowledge based on the new FloodResponse
                     self.update_graph(flood_response.path_trace);
                 }
                 PacketType::FloodRequest(mut flood_request) => {
+                    log::info!("ContentServer {}: Received FloodRequest: {:?}", self.id, flood_request);
                     flood_request.path_trace.push((self.id, NodeType::Server));
 
                     let flood_response = FloodResponse {
