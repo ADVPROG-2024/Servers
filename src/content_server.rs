@@ -113,11 +113,13 @@ impl DronegowskiServer for ContentServer {
         loop {
             select_biased! {
                 recv(self.packet_recv) -> packet_res => {
+                    log::info!("ContentServer {}: Received packet {:?}", self.id, packet_res);
                     if let Ok(packet) = packet_res {
                         self.handle_packet(packet);
                     }
                 },
                 recv(self.sim_controller_recv) -> command_res => {
+                    log::info!("ContentServer {}: Received command {:?}", self.id, command_res);
                     if let Ok(command) = command_res {
                         self.handle_command(command);
                     }
@@ -137,7 +139,6 @@ impl DronegowskiServer for ContentServer {
                         .entry(key)
                         .or_insert_with(Vec::new)
                         .push(fragment.clone());
-                    log::info!("fragment {} add to message storage", fragment.fragment_index);
                     // Check if all the fragments are received
                     if let Some(fragments) = self.message_storage.get(&key) {
                         if let Some(first_fragment) = fragments.first() {
@@ -147,30 +148,47 @@ impl DronegowskiServer for ContentServer {
                                         if let TestMessage::WebServerMessages(client_messages) = message {
                                             match client_messages {
                                                 ClientMessages::ServerType =>{
+                                                    log::info!("ContentServer {}: Received server type request from {}", self.id, source_id);
                                                     self.send_message(ServerMessages::ServerType(ServerType::Content), source_id);
                                                 },
                                                 ClientMessages::FilesList =>{
+                                                    log::info!("ContentServer {}: Received FilesList request from {}", self.id, source_id);
                                                     let list = self.list_files();
+                                                    log::info!("ContentServer {}: sending FilesList to {}", self.id, source_id);
                                                     self.send_message(ServerMessages::FilesList(list), source_id);
                                                 },
                                                 ClientMessages::File(file_id) =>{
+                                                    log::info!("ContentServer {}: Received File request (file_id {}) from {}", self.id, file_id, source_id);
                                                     match self.get_file_text(file_id) {
-                                                        Some(text) => {self.send_message(ServerMessages::File(text), source_id);},
-                                                        None => {self.send_message(ServerMessages::Error("file not found".to_string()),source_id)},
+                                                        Some(text) => {
+                                                            log::info!("ContentServer {}: sending file (file_id {}) to {}", self.id, file_id, source_id);
+                                                            self.send_message(ServerMessages::File(text), source_id);
+                                                        },
+                                                        None => {
+                                                            log::info!("ContentServer {}: file not found, sending error to {}", self.id, source_id);
+                                                            self.send_message(ServerMessages::Error("file not found".to_string()),source_id);
+                                                        }
                                                     }
                                                 },
                                                 ClientMessages::Media(media_id) =>{
+                                                    log::info!("ContentServer {}: Received Media request (media_id {}) from {}", self.id, media_id, source_id);
                                                     match self.get_media(media_id) {
-                                                        Some(media) => self.send_message(ServerMessages::Media(media), source_id),
-                                                        None => {self.send_message(ServerMessages::Error("media not found".to_string()),source_id)},
+                                                        Some(media) => {
+                                                            log::info!("ContentServer {}: sending media (media_id {}) to {}", self.id, media_id, source_id);
+                                                            self.send_message(ServerMessages::Media(media), source_id);
+                                                        },
+                                                        None => {
+                                                            log::info!("ContentServer {}: media not found, sending error to {}", self.id, source_id);
+                                                            self.send_message(ServerMessages::Error("media not found".to_string()),source_id)
+                                                        },
                                                     }
                                                 },
-                                                _ => {log::error!("Unkown message type");},
+                                                _ => {log::error!("ContentServer {}: Unkown message type", self.id);},
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        log::error!("Error reconstructing the message: {}", e);
+                                        log::error!("ContentServer {}: Error reconstructing the message: {}", self.id, e);
                                     }
                                 }
                             }
@@ -183,44 +201,46 @@ impl DronegowskiServer for ContentServer {
                     // update the graph knowledge based on the new FloodResponse
                     self.update_graph(flood_response.path_trace);
                 }
-                PacketType::FloodRequest(mut flood_request) => {
+                PacketType::FloodRequest(flood_request) => {
                     log::info!("ContentServer {}: Received FloodRequest: {:?}", self.id, flood_request);
-                    flood_request.path_trace.push((self.id, NodeType::Server));
+
+                    let mut response_path_trace = flood_request.path_trace.clone();
+                    response_path_trace.push((self.id, NodeType::Server));
 
                     let flood_response = FloodResponse {
                         flood_id: flood_request.flood_id,
-                        path_trace: flood_request.path_trace.clone(),
+                        path_trace: response_path_trace,
                     };
-
-                    let source_id = packet.routing_header.source().expect("FloodRequest must have a source");
 
                     let response_packet = Packet {
                         pack_type: PacketType::FloodResponse(flood_response),
                         routing_header: SourceRoutingHeader {
-                            hop_index: 0, // Reset hop_index
+                            hop_index: 0,
                             hops: flood_request.path_trace.iter().rev().map(|(id, _)| *id).collect(),
                         },
                         session_id: packet.session_id,
                     };
 
-                    if let Some(sender) = self.packet_send.get(&source_id) {
+                    log::info!("ContentServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
+                    let next_node = response_packet.routing_header.hops[0];
+                    if let Some(sender) = self.packet_send.get(&next_node) {
                         match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
                             Err(_) => {
-                                log::warn!("ContentServer {}: Timeout sending packet to {}", self.id, source_id);
+                                log::warn!("ContentServer {}: Timeout sending packet to {}", self.id, next_node);
                             }
                             Ok(..)=>{
-                                log::info!("ContentServer {}: Sent FloodResponse back to {}", self.id, source_id);
+                                log::info!("ContentServer {}: Sent FloodResponse back to {}", self.id, next_node);
                             }
                         }
                     } else {
-                        log::warn!("ContentServer {}: No sender found for node {}", self.id, source_id);
+                        log::warn!("ContentServer {}: No sender found for node {}", self.id, next_node);
                     }
                 }
                 PacketType::Ack(ack) => {
-                    //gestire ack
+                    log::info!("ContentServer {}: Received Ack {:?} from {}", self.id, ack, source_id);
                 }
                 PacketType::Nack(nack) => {
-                    //gestire nack
+                    log::info!("ContentServer {}: Received Nack {:?} from {}", self.id, nack, source_id);
                 }
             }
         }
@@ -269,7 +289,6 @@ impl DronegowskiServer for ContentServer {
     }
 
 
-
     // message sending methods
     fn compute_best_path(&self, target_client: NodeId) -> Option<Vec<NodeId>> {
         use std::collections::VecDeque;
@@ -307,41 +326,49 @@ impl DronegowskiServer for ContentServer {
     fn handle_command(&mut self, command: ServerCommand) {
         match command {
             ServerCommand::AddSender(id, sender) => {
+                log::info!("ContentServer {}: Received AddSender Command: add {}", self.id, id);
                 self.add_neighbor(id, sender);
             }
             ServerCommand::RemoveSender(id) => {
+                log::info!("ContentServer {}: Received RemoveSender Command: remove {}", self.id, id);
                 self.remove_neighbor(id);
             }
             _ =>{
-                // Unclassified Command
+                log::error!("ContentServer {}: Received unhandled ServerCommand type", self.id);
             }
         }
     }
     fn add_neighbor(&mut self, node_id: NodeId, sender: Sender<Packet>) {
         if let std::collections::hash_map::Entry::Vacant(e) = self.packet_send.entry(node_id) {
             e.insert(sender);
-            self.network_discovery()
+            log::info!("ContentServer {}: Successfully added {}", self.id, node_id);
+            log::info!("ContentServer {}: starting a new network discovery", self.id);
+            self.network_discovery();
+
         } else {
-            panic!("Sender for node {node_id} already stored in the map!");
+            log::error!("ContentServer {}: Sender for node {node_id} already stored in the map!", self.id);
+        }
+    }
+    fn remove_neighbor(&mut self, node_id: NodeId) {
+        if self.packet_send.contains_key(&node_id) {
+            self.packet_send.remove(&node_id);
+            self.remove_from_topology(node_id);
+            log::info!("ContentServer {}: Successfully removed neighbour {}", self.id, node_id);
+            log::info!("ContentServer {}: starting a new network discovery", self.id);
+            self.network_discovery();
+        } else {
+            log::error!("ContentServer {}: the {} is not a neighbour", self.id, node_id);
         }
     }
     fn remove_from_topology(&mut self, node_id: NodeId) {
         self.topology.retain(|&(a, b)| a != node_id && b != node_id);
         self.node_types.remove(&node_id);
     }
-    fn remove_neighbor(&mut self, node_id: NodeId) {
-        if self.packet_send.contains_key(&node_id) {
-            self.packet_send.remove(&node_id);
-            self.remove_from_topology(node_id);
-            self.network_discovery();
-        } else {
-            panic!("the {} is not neighbour of the drone {}", node_id, self.id);
-        }
-    }
 
 
     // network discovery related methods
     fn network_discovery(&self) {
+        log::info!("ContentServer {}: starting Network discovery", self.id);
         let mut path_trace = Vec::new();
         path_trace.push((self.id, NodeType::Server));
 
@@ -353,6 +380,7 @@ impl DronegowskiServer for ContentServer {
         };
 
         for (node_id, sender) in &self.packet_send {
+            log::info!("ContentServer {}: sending flood request to {}", self.id, node_id);
             let _ = sender.send(Packet {
                 pack_type: PacketType::FloodRequest(flood_request.clone()),
                 routing_header: SourceRoutingHeader {
@@ -364,7 +392,7 @@ impl DronegowskiServer for ContentServer {
         }
     }
     fn update_graph(&mut self, path_trace: Vec<(NodeId, NodeType)>) {
-        log::info!("Aggiornamento del grafo con i dati ricevuti: {:?}", path_trace);
+        log::info!("ContentServer {}: updating graph knowledge using: {:?}", self.id, path_trace);
         for i in 0..path_trace.len() - 1 {
             let (node_a, _) = path_trace[i];
             let (node_b, _) = path_trace[i + 1];
@@ -405,9 +433,11 @@ impl ContentServer {
 
     //message sending_method
     fn send_message(&mut self, message: ServerMessages, destination: NodeId) {
+        log::info!("ContentServer {}: sending packet to {}", self.id, destination);
         let route=self.compute_best_path(destination).unwrap_or(Vec::new());
 
         if let Some(&neighbour_id) = route.first() {
+            log::info!("ContentServer {}: sending packet to {}", self.id, neighbour_id);
             if let Some(sender) = self.packet_send.get(&neighbour_id) {
 
                 let packets = fragment_message(&TestMessage::WebClientMessages(message), route, 1);
@@ -417,10 +447,10 @@ impl ContentServer {
                     sender.send(packet).expect("Error occurred sending the message to the neighbour.");
                 }
             } else {
-                println!("Error: Neighbour {} not found!", neighbour_id);
+                log::error!("ContentServer {}: Neighbour {} not found!", self.id, neighbour_id);
             }
         } else {
-            println!("Error: There is no available route");
+            log::error!("ContentServer {}: There is no available route", self.id);
         }
     }
 
