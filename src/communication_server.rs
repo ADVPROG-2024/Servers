@@ -165,7 +165,8 @@ impl DronegowskiServer for CommunicationServer {
                 };
 
                 // 5. Send the response back to the source.
-                let next_node = packet.routing_header.hops[0];
+                log::info!("CommuncationServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
+                let next_node = response_packet.routing_header.hops[0];
                 if let Some(sender) = self.packet_send.get(&next_node) {
                             match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
                                 Err(_) => {
