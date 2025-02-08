@@ -80,10 +80,14 @@ impl DronegowskiServer for CommunicationServer {
     }
 
     fn handle_packet(&mut self, packet: Packet) {
+        log::info!("Server {}: Received packet: {:?}", self.id, packet); // Log the received packet
+
         let client_id = packet.routing_header.source().unwrap(); // Identifica il client ID
         let key = packet.session_id; // Identifica la sessione
         match packet.pack_type {
             PacketType::MsgFragment(fragment) => {
+                log::info!("Server {}: Received MsgFragment from {}, session: {}, index: {}, total: {}",self.id, client_id, key, fragment.fragment_index, fragment.total_n_fragments);
+
                 // Aggiunta del frammento al message_storage
                 self.message_storage
                     .entry(key)
@@ -97,6 +101,7 @@ impl DronegowskiServer for CommunicationServer {
                             // Tutti i frammenti sono stati ricevuti, tenta di ricostruire il messaggio
                             match self.reconstruct_message(key) {
                                 Ok(message) => {
+                                    log::info!("Server {}: Message reassembled successfully.", self.id);
                                     if let TestMessage::WebServerMessages(client_message) = message {
                                         match client_message {
                                             ClientMessages::ServerType => self.send_my_type(client_id),
@@ -137,17 +142,17 @@ impl DronegowskiServer for CommunicationServer {
             PacketType::FloodRequest(flood_request) => { // Non più mut flood_request
                 // 1. Update the graph *immediately*.
                 self.update_graph(flood_request.path_trace.clone());
-        
+
                 // 2. Create a *new* path trace for the response.  This includes the server.
                 let mut response_path_trace = flood_request.path_trace.clone();
                 response_path_trace.push((self.id, NodeType::Server));
-        
+
                 // 3. Create the FloodResponse.
                 let flood_response = FloodResponse {
                     flood_id: flood_request.flood_id,
                     path_trace: response_path_trace,  // Use the *new* path trace.
                 };
-        
+
                 // 4. Create the response packet.  Reverse the *original* path for routing.
                 let response_packet = Packet {
                     pack_type: PacketType::FloodResponse(flood_response),
@@ -157,7 +162,7 @@ impl DronegowskiServer for CommunicationServer {
                     },
                     session_id: packet.session_id,
                 };
-        
+
                 // 5. Send the response back to the source.
                 let source_id = packet.routing_header.source().expect("FloodRequest must have source");
                  if let Some(sender) = self.packet_send.get(&source_id) {
