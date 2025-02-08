@@ -408,7 +408,7 @@ impl DronegowskiServer for ContentServer {
 }
 
 impl ContentServer {
-    pub(crate) fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType, file_path:&str, media_path:&str) -> Self {
+    pub fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType, file_path:&str, media_path:&str) -> Self {
 
         let mut server = Self {
             id,
