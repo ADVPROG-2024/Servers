@@ -136,7 +136,7 @@ impl DronegowskiServer for ContentServer {
                     self.message_storage
                         .entry(key)
                         .or_insert_with(Vec::new)
-                        .push(fragment);
+                        .push(fragment.clone());
                     log::info!("fragment {} add to message storage", fragment.fragment_index);
                     // Check if all the fragments are received
                     if let Some(fragments) = self.message_storage.get(&key) {
