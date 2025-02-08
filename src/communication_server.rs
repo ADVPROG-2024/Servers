@@ -7,7 +7,7 @@ use dronegowski_utils::functions::{assembler, fragment_message, generate_unique_
 use dronegowski_utils::hosts::{ClientMessages, ServerCommand, ServerEvent, ServerMessages, ServerType, TestMessage};
 use serde::de::DeserializeOwned;
 use wg_2024::network::{NodeId, SourceRoutingHeader};
-use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
+use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NackType, NodeType, Packet, PacketType};
 use crate::DronegowskiServer;
 
 #[derive(Clone)]
@@ -168,10 +168,10 @@ impl DronegowskiServer for CommunicationServer {
             }
 
             PacketType::Ack(ack) => {
-                //gestire ack
+                log::info!("Communication server {}: ricevuto ack {:?}", self.id, ack);
             }
             PacketType::Nack(nack) => {
-                //gestire nack
+                log::info!("Communication server {}: ricevuto nack {:?}", self.id, nack);
             }
             _ => {
                 println!("Unhandled packet type");
