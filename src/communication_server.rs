@@ -134,12 +134,15 @@ impl DronegowskiServer for CommunicationServer {
                 // Gestisce la risposta di flooding aggiornando il grafo
                 self.update_graph(flood_response.path_trace);
             }
-            PacketType::FloodRequest( mut flood_request) => {
-                // flood_request.path_trace.push((self.id, NodeType::Server));
+            PacketType::FloodRequest(flood_request) => { // Non più mut flood_request
+                // Aggiungi il server ALLA FINE, solo per la risposta.
+                let mut updated_path_trace = flood_request.path_trace.clone();
+                updated_path_trace.push((self.id, NodeType::Server));
+
 
                 let flood_response = FloodResponse {
                     flood_id: flood_request.flood_id,
-                    path_trace: flood_request.path_trace.clone(),
+                    path_trace: updated_path_trace, // Usa la path_trace aggiornata
                 };
 
                 let source_id = packet.routing_header.source().expect("FloodRequest must have a source");
@@ -147,18 +150,20 @@ impl DronegowskiServer for CommunicationServer {
                 let response_packet = Packet {
                     pack_type: PacketType::FloodResponse(flood_response),
                     routing_header: SourceRoutingHeader {
-                        hop_index: 0, // Reset hop_index
+                        hop_index: 0,
                         hops: flood_request.path_trace.iter().rev().map(|(id, _)| *id).collect(),
                     },
                     session_id: packet.session_id,
                 };
+                // Aggiorna il grafo PRIMA di inviare la risposta.  Questo è cruciale.
+                self.update_graph(flood_request.path_trace.clone());
 
                 if let Some(sender) = self.packet_send.get(&source_id) {
                     match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
                         Err(_) => {
                             log::warn!("CommunicationServer {}: Timeout sending packet to {}", self.id, source_id);
                         }
-                        Ok(..)=>{
+                        Ok(..) => {
                             log::info!("CommunicationServer {}: Sent FloodResponse back to {}", self.id, source_id);
                         }
                     }
@@ -166,6 +171,7 @@ impl DronegowskiServer for CommunicationServer {
                     log::warn!("CommunicationServer {}: No sender found for node {}", self.id, source_id);
                 }
             }
+
             PacketType::Ack(ack) => {
                 //gestire ack
             }
