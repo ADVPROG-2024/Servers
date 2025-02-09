@@ -416,6 +416,7 @@ impl DronegowskiServer for ContentServer {
         for (node_id, node_type) in path_trace {
             self.node_types.insert(node_id, node_type);
         }
+        log::info!("ContentServer {}: topology after update: {:?}", self.id, self.topology);
     }
 
 }
