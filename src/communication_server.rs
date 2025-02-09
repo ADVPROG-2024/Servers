@@ -106,23 +106,18 @@ impl DronegowskiServer for CommunicationServer {
                                                 log::info!("Communication server {}: Received RegistrationToChat request", self.id);
                                                 self.register_client(client_id)
                                             },
-                                            ClientMessages::ClientList | ClientMessages::MessageFor(_, _) => {
-                                                if self.registered_client.contains(&client_id) {
-                                                    match client_message {
-                                                        ClientMessages::ClientList => self.send_register_client(client_id),
-                                                        ClientMessages::MessageFor(target_id, message) => {
-                                                            if self.registered_client.contains(&target_id) {
-                                                                self.forward_message(target_id, client_id, message)
-                                                            } else {
-                                                                println!("target client not registered");
-                                                            }
-                                                        }
-                                                        _ => {}
-                                                    }
+                                            ClientMessages::ClientList =>{
+                                                log::info!("Communication server {}: Received ClientList request", self.id);
+                                                self.send_register_client(client_id);
+                                            },
+                                            ClientMessages::MessageFor(target_id, message) => {
+                                                if self.registered_client.contains(&target_id) {
+                                                    self.forward_message(target_id, client_id, message)
                                                 } else {
-                                                    println!("client not registered");
+                                                    println!("target client not registered");
                                                 }
-                                            }
+
+                                            },
                                             _ => println!("Unknown ClientMessage received"),
                                         }
                                     }
