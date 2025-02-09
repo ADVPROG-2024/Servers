@@ -78,8 +78,11 @@ impl DronegowskiServer for CommunicationServer {
         let client_id = packet.routing_header.source().unwrap(); // Identifica il client ID
         let key = packet.session_id; // Identifica la sessione
         match packet.pack_type {
-            PacketType::MsgFragment(fragment) => {
+            PacketType::MsgFragment(ref fragment) => {
                 //log::info!("CommuncationServer {}: Received MsgFragment from {}, session: {}, index: {}, total: {}",self.id, client_id, key, fragment.clone().fragment_index, fragment.total_n_fragments);
+
+                // send ack of fragment
+                self.send_ack(packet.clone(), fragment.clone());
 
                 // Aggiunta del frammento al message_storage
                 self.message_storage
@@ -396,6 +399,36 @@ impl CommunicationServer {
         } else {
             log::error!("Communication server {}: empty Route, neighbour impossible to find!", self.id);
         }
+    }
+
+    fn send_ack(&mut self, packet: Packet, fragment: Fragment) {
+        log::info!("CommunicationServer {}: Sending Ack for fragment {}", self.id, fragment.fragment_index);
+
+        let reversed_hops: Vec<NodeId> = packet.routing_header.hops.iter().rev().cloned().collect();
+        let ack_routing_header = SourceRoutingHeader {
+            hop_index: 1,
+            hops: reversed_hops,
+        };
+
+        let ack_packet = Packet::new_ack(
+            ack_routing_header,
+            packet.session_id,
+            fragment.fragment_index,
+        );
+
+        if let Some(next_hop) = ack_packet.routing_header.hops.get(1).cloned() {
+
+            log::info!("CommunicationServer {}: sending ack {:?} to {}", self.id, ack_packet, next_hop);
+            if let Some(sender) = self.packet_send.get(&next_hop) {
+                sender.send(ack_packet).expect("Error occurred sending the ack to the neighbour.");
+            } else {
+                log::error!("CommunicationServer {}: Neighbour {} not found!", self.id, next_hop);
+            }
+
+        } else {
+            log::warn!("CommunicationServer {}: No valid path to send Ack for fragment {}", self.id, fragment.fragment_index);
+        }
+
     }
 
 }
