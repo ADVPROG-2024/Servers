@@ -147,11 +147,15 @@ impl DronegowskiServer for ContentServer {
         if let Some(source_id) = packet.routing_header.source(){
             let key = packet.session_id;
             match packet.pack_type {
-                PacketType::MsgFragment(fragment) => {
+                PacketType::MsgFragment(ref fragment) => {
+
+                    self.send_ack(packet.clone(), fragment.clone());
+
                     self.message_storage
                         .entry(key)
                         .or_insert_with(Vec::new)
                         .push(fragment.clone());
+
                     // Check if all the fragments are received
                     if let Some(fragments) = self.message_storage.get(&key) {
                         if let Some(first_fragment) = fragments.first() {
@@ -278,7 +282,7 @@ impl DronegowskiServer for ContentServer {
                         if let Some(fragment) = fragment_map.get(&index) {
                             assembler(&mut full_data, fragment);
                         } else {
-                            return Err(format!("Frammento mancante con indice: {}", index).into());
+                            return Err(format!("Missing fragment of index: {}", index).into());
                         }
                     }
 
@@ -466,6 +470,36 @@ impl ContentServer {
         } else {
             log::error!("ContentServer {}: There is no available route", self.id);
         }
+    }
+
+    fn send_ack(&mut self, packet: Packet, fragment: Fragment) {
+        log::info!("ContentServer {}: Sending Ack for fragment {}", self.id, fragment.fragment_index);
+
+        let reversed_hops: Vec<NodeId> = packet.routing_header.hops.iter().rev().cloned().collect();
+        let ack_routing_header = SourceRoutingHeader {
+            hop_index: 1,
+            hops: reversed_hops,
+        };
+
+        let ack_packet = Packet::new_ack(
+            ack_routing_header,
+            packet.session_id,
+            fragment.fragment_index,
+        );
+
+        if let Some(next_hop) = ack_packet.routing_header.hops.get(1).cloned() {
+
+            log::info!("ContentServer {}: sending ack {:?} to {}", self.id, ack_packet, next_hop);
+            if let Some(sender) = self.packet_send.get(&next_hop) {
+                sender.send(ack_packet).expect("Error occurred sending the ack to the neighbour.");
+            } else {
+                log::error!("ContentServer {}: Neighbour {} not found!", self.id, next_hop);
+            }
+
+        } else {
+            log::warn!("ContentServer {}: No valid path to send Ack for fragment {}", self.id, fragment.fragment_index);
+        }
+
     }
 
 }
