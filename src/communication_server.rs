@@ -167,11 +167,16 @@ impl DronegowskiServer for CommunicationServer {
                 log::info!("CommuncationServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
                 let next_node = response_packet.routing_header.hops[0];
                 if let Some(sender) = self.packet_send.get(&next_node) {
+
                             match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
                                 Err(_) => {
                                     log::warn!("CommunicationServer {}: Timeout sending packet to {}", self.id, next_node);
                                 }
                                 Ok(..)=>{
+                                    // Notifies the simulation controller of packet sending.
+                                    let _ = self
+                                        .sim_controller_send
+                                        .send(ServerEvent::PacketSent(response_packet.clone()));
                                     log::info!("CommunicationServer {}: Sent FloodResponse back to {}", self.id, next_node);
                                 }
                             }
