@@ -391,7 +391,11 @@ impl CommunicationServer {
 
                 for mut packet in packets {
                     packet.routing_header.hop_index = 1;
-                    sender.send(packet).expect("Error during sending packet to neighbour.");
+                    sender.send(packet.clone()).expect("Error during sending packet to neighbour.");
+                    // Notifies the simulation controller of packet sending.
+                    let _ = self
+                        .sim_controller_send
+                        .send(ServerEvent::PacketSent(packet.clone()));
                 }
             } else {
                 log::error!("Communication server {}: Neighbour {} not find!", self.id, neighbour_id);
@@ -420,7 +424,11 @@ impl CommunicationServer {
 
             log::info!("CommunicationServer {}: sending ack {:?} to {}", self.id, ack_packet, next_hop);
             if let Some(sender) = self.packet_send.get(&next_hop) {
-                sender.send(ack_packet).expect("Error occurred sending the ack to the neighbour.");
+                sender.send(ack_packet.clone()).expect("Error occurred sending the ack to the neighbour.");
+                // Notifies the simulation controller of packet sending.
+                let _ = self
+                    .sim_controller_send
+                    .send(ServerEvent::PacketSent(ack_packet.clone()));
             } else {
                 log::error!("CommunicationServer {}: Neighbour {} not found!", self.id, next_hop);
             }
