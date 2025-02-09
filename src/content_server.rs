@@ -59,6 +59,15 @@ impl TextServer {
 
         Self { stored_texts }
     }
+
+    pub fn list_files(&self) -> Vec<(u64, String)> {
+        self.stored_texts.iter()
+            .map(|(&id, file)| (id, file.title.clone()))
+            .collect()
+    }
+    pub fn get_file_text(&self, file_id: u64) -> Option<FileContent> {
+        self.stored_texts.get(&file_id).cloned()
+    }
 }
 
 
@@ -90,6 +99,10 @@ impl MediaServer {
         }
 
         Self { stored_media }
+    }
+
+    pub fn get_media(&self, media_id: u64) -> Option<Vec<u8>> {
+        self.stored_media.get(&media_id).cloned()
     }
 }
 
@@ -153,13 +166,13 @@ impl DronegowskiServer for ContentServer {
                                                 },
                                                 ClientMessages::FilesList =>{
                                                     log::info!("ContentServer {}: Received FilesList request from {}", self.id, source_id);
-                                                    let list = self.list_files();
+                                                    let list = self.text.list_files();
                                                     log::info!("ContentServer {}: sending FilesList to {}", self.id, source_id);
                                                     self.send_message(ServerMessages::FilesList(list), source_id);
                                                 },
                                                 ClientMessages::File(file_id) =>{
                                                     log::info!("ContentServer {}: Received File request (file_id {}) from {}", self.id, file_id, source_id);
-                                                    match self.get_file_text(file_id) {
+                                                    match self.text.get_file_text(file_id) {
                                                         Some(text) => {
                                                             log::info!("ContentServer {}: sending file (file_id {}) to {}", self.id, file_id, source_id);
                                                             self.send_message(ServerMessages::File(text), source_id);
@@ -172,7 +185,7 @@ impl DronegowskiServer for ContentServer {
                                                 },
                                                 ClientMessages::Media(media_id) =>{
                                                     log::info!("ContentServer {}: Received Media request (media_id {}) from {}", self.id, media_id, source_id);
-                                                    match self.get_media(media_id) {
+                                                    match self.media.get_media(media_id) {
                                                         Some(media) => {
                                                             log::info!("ContentServer {}: sending media (media_id {}) to {}", self.id, media_id, source_id);
                                                             self.send_message(ServerMessages::Media(media), source_id);
@@ -454,17 +467,4 @@ impl ContentServer {
         }
     }
 
-
-    // file related methods
-    fn list_files(&self) -> Vec<(u64, String)> {
-        self.text.stored_texts.iter()
-            .map(|(&id, file)| (id, file.title.clone()))
-            .collect()
-    }
-    fn get_file_text(&self, file_id: u64) -> Option<FileContent> {
-        self.text.stored_texts.get(&file_id).cloned()
-    }
-    fn get_media(&self, media_id: u64) -> Option<Vec<u8>> {
-        self.media.stored_media.get(&media_id).cloned()
-    }
 }

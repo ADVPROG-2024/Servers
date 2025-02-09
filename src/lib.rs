@@ -1,6 +1,6 @@
 mod server;
 mod communication_server;
-mod content_server;
+pub mod content_server;
 
 pub use server::*;
 pub use communication_server::*;
