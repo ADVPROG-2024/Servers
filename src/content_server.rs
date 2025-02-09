@@ -448,7 +448,7 @@ impl ContentServer {
     fn send_message(&mut self, message: ServerMessages, destination: NodeId) {
         log::info!("ContentServer {}: sending packet to {}", self.id, destination);
         let route=self.compute_best_path(destination).unwrap_or(Vec::new());
-
+        log::info!("ContentServer {}: sending through route {:?}", self.id, route);
         if let Some(&neighbour_id) = route.first() {
             log::info!("ContentServer {}: sending packet to {}", self.id, neighbour_id);
             if let Some(sender) = self.packet_send.get(&neighbour_id) {
