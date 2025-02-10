@@ -134,10 +134,20 @@ impl DronegowskiServer for CommunicationServer {
                                                     self.send_register_client(client_id);
                                                 },
                                                 ClientMessages::MessageFor(target_id, message) => {
-                                                    if self.registered_client.contains(&target_id) && self.registered_client.contains(&client_id){
-                                                        self.forward_message(target_id, client_id, message)
+                                                    if self.registered_client.contains(&client_id) {
+                                                        if self.registered_client.contains(&target_id) {
+                                                            self.forward_message(target_id, client_id, message)
+                                                        } else {
+                                                            log::error!("target not registered");
+                                                            if let Some(path) = self.compute_best_path(client_id) {
+                                                                self.send_message(ServerMessages::Error(format!("{} not registered to server", target_id)), path);
+                                                            } else {
+                                                                log::error!("Communication server {}: path to {} not found", self.id, client_id);
+                                                            }
+                                                        }
+
                                                     } else {
-                                                        log::error!("client or target not registered");
+                                                        log::error!("client not registered");
                                                         if let Some(path) = self.compute_best_path(client_id) {
                                                             self.send_message(ServerMessages::Error(format!("{} not registered to server", client_id)), path);
                                                         } else {
