@@ -134,7 +134,7 @@ impl DronegowskiServer for CommunicationServer {
                                                     self.send_register_client(client_id);
                                                 },
                                                 ClientMessages::MessageFor(target_id, message) => {
-                                                    if self.registered_client.contains(&target_id) {
+                                                    if self.registered_client.contains(&target_id) && self.registered_client.contains(&client_id){
                                                         self.forward_message(target_id, client_id, message)
                                                     } else {
                                                         log::info!("");
