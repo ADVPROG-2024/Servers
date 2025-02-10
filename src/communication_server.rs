@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::process::Command;
 use std::time::Duration;
@@ -6,10 +6,10 @@ use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{assembler, fragment_message, generate_unique_id};
 use dronegowski_utils::hosts::{ClientMessages, ServerCommand, ServerEvent, ServerMessages, ServerType, TestMessage};
 use dronegowski_utils::hosts::ServerType::Communication;
-use log::{info, log};
+use log::{error, info, log, warn};
 use serde::de::DeserializeOwned;
 use wg_2024::network::{NodeId, SourceRoutingHeader};
-use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NackType, NodeType, Packet, PacketType};
+use wg_2024::packet::{Ack, FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType, Packet, PacketType};
 use crate::DronegowskiServer;
 
 #[derive(Clone)]
@@ -24,6 +24,11 @@ pub struct CommunicationServer {
     message_storage: HashMap<u64, Vec<Fragment>>,       // Store for reassembling messages
     server_type: ServerType,
     registered_client: Vec<NodeId>,                     //typology of the server
+
+    pending_messages: HashMap<u64, Vec<Packet>>,        // Storage of not acked fragments
+    acked_fragments: HashMap<u64, HashSet<u64>>,        // storage of acked fragments
+    nack_counter: HashMap<(u64, u64, NodeId), u8>,
+    excluded_nodes: HashSet<NodeId>,
 }
 
 impl DronegowskiServer for CommunicationServer {
@@ -61,145 +66,159 @@ impl DronegowskiServer for CommunicationServer {
 
         for (node_id, sender) in &self.packet_send {
             log::info!("CommunicationServer {}: sending flood request to {}", self.id, node_id);
-            let _ = sender.send(Packet {
+            // build the flood_request packets
+            let flood_request_packet = Packet {
                 pack_type: PacketType::FloodRequest(flood_request.clone()),
                 routing_header: SourceRoutingHeader {
                     hop_index: 0,
                     hops: vec![self.id, *node_id],
                 },
                 session_id: flood_request.flood_id,
-            });
+            };
+
+            // send the flood_request
+            let _ = sender.send(flood_request_packet.clone());
+
+            // notify the SC that I sent a flood_request
+            let _ = self
+                .sim_controller_send
+                .send(ServerEvent::PacketSent(flood_request_packet.clone()));
         }
     }
 
     fn handle_packet(&mut self, packet: Packet) {
         log::info!("Server {}: Received packet: {:?}", self.id, packet); // Log the received packet
+        if let Some(source_id) = packet.routing_header.source() {
+            let client_id = packet.routing_header.source().unwrap(); // Identifica il client ID
+            let key = packet.session_id; // Identifica la sessione
+            match packet.pack_type {
+                PacketType::MsgFragment(ref fragment) => {
+                    //log::info!("CommuncationServer {}: Received MsgFragment from {}, session: {}, index: {}, total: {}",self.id, client_id, key, fragment.clone().fragment_index, fragment.total_n_fragments);
 
-        let client_id = packet.routing_header.source().unwrap(); // Identifica il client ID
-        let key = packet.session_id; // Identifica la sessione
-        match packet.pack_type {
-            PacketType::MsgFragment(ref fragment) => {
-                //log::info!("CommuncationServer {}: Received MsgFragment from {}, session: {}, index: {}, total: {}",self.id, client_id, key, fragment.clone().fragment_index, fragment.total_n_fragments);
+                    // send ack of fragment
+                    self.send_ack(packet.clone(), fragment.clone());
 
-                // send ack of fragment
-                self.send_ack(packet.clone(), fragment.clone());
+                    // Aggiunta del frammento al message_storage
+                    self.message_storage
+                        .entry(key)
+                        .or_insert_with(Vec::new)
+                        .push(fragment.clone());
+                    //log::info!("CommunicationServer {}: fragment {} added to message storage", self.id, fragment.clone().fragment_index);
 
-                // Aggiunta del frammento al message_storage
-                self.message_storage
-                    .entry(key)
-                    .or_insert_with(Vec::new)
-                    .push(fragment.clone());
-                //log::info!("CommunicationServer {}: fragment {} added to message storage", self.id, fragment.clone().fragment_index);
+                    // Verifica se tutti i frammenti sono stati ricevuti
+                    if let Some(fragments) = self.message_storage.get(&key) {
+                        if let Some(first_fragment) = fragments.first() {
+                            if fragments.len() as u64 == first_fragment.total_n_fragments {
+                                // Tutti i frammenti sono stati ricevuti, tenta di ricostruire il messaggio
+                                match self.reconstruct_message(key) {
+                                    Ok(message) => {
+                                        log::info!("Server {}: Message reassembled successfully.", self.id);
+                                        if let TestMessage::WebServerMessages(client_message) = message {
 
-                // Verifica se tutti i frammenti sono stati ricevuti
-                if let Some(fragments) = self.message_storage.get(&key) {
-                    if let Some(first_fragment) = fragments.first() {
-                        if fragments.len() as u64 == first_fragment.total_n_fragments {
-                            // Tutti i frammenti sono stati ricevuti, tenta di ricostruire il messaggio
-                            match self.reconstruct_message(key) {
-                                Ok(message) => {
-                                    log::info!("Server {}: Message reassembled successfully.", self.id);
-                                    if let TestMessage::WebServerMessages(client_message) = message {
+                                            // Sends the received message to the simulation controller.
+                                            let _ = self
+                                                .sim_controller_send
+                                                .send(ServerEvent::MessageReceived(TestMessage::WebServerMessages(client_message.clone())));
 
-                                        // Sends the received message to the simulation controller.
-                                        let _ = self
-                                            .sim_controller_send
-                                            .send(ServerEvent::MessageReceived(TestMessage::WebServerMessages(client_message.clone())));
+                                            match client_message {
+                                                ClientMessages::ServerType => {
+                                                    log::info!("Communication server {}: Received server type request from {}", self.id, client_id);
+                                                    self.send_my_type(client_id)
+                                                },
+                                                ClientMessages::RegistrationToChat => {
+                                                    log::info!("Communication server {}: Received RegistrationToChat request", self.id);
+                                                    self.register_client(client_id)
+                                                },
+                                                ClientMessages::ClientList =>{
+                                                    log::info!("Communication server {}: Received ClientList request", self.id);
+                                                    self.send_register_client(client_id);
+                                                },
+                                                ClientMessages::MessageFor(target_id, message) => {
+                                                    if self.registered_client.contains(&target_id) {
+                                                        self.forward_message(target_id, client_id, message)
+                                                    } else {
+                                                        println!("target client not registered");
+                                                    }
 
-                                        match client_message {
-                                            ClientMessages::ServerType => {
-                                                log::info!("Communication server {}: Received server type request from {}", self.id, client_id);
-                                                self.send_my_type(client_id)
-                                            },
-                                            ClientMessages::RegistrationToChat => {
-                                                log::info!("Communication server {}: Received RegistrationToChat request", self.id);
-                                                self.register_client(client_id)
-                                            },
-                                            ClientMessages::ClientList =>{
-                                                log::info!("Communication server {}: Received ClientList request", self.id);
-                                                self.send_register_client(client_id);
-                                            },
-                                            ClientMessages::MessageFor(target_id, message) => {
-                                                if self.registered_client.contains(&target_id) {
-                                                    self.forward_message(target_id, client_id, message)
-                                                } else {
-                                                    println!("target client not registered");
-                                                }
-
-                                            },
-                                            _ => println!("Unknown ClientMessage received"),
+                                                },
+                                                _ => println!("Unknown ClientMessage received"),
+                                            }
                                         }
                                     }
-                                }
-                                Err(e) => {
-                                    println!("Error reconstructing the message: {}", e);
+                                    Err(e) => {
+                                        println!("Error reconstructing the message: {}", e);
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-            PacketType::FloodResponse(flood_response) => {
-                // Gestisce la risposta di flooding aggiornando il grafo
-                log::info!("CommuncationServer {}: Received FloodResponse: {:?}", self.id, flood_response);
-                self.update_graph(flood_response.path_trace);
-            }
-            PacketType::FloodRequest(flood_request) => { // Non più mut flood_request
-                log::info!("CommunicationServer {}: Received FloodRequest {:?}", self.id, flood_request);
-                // 1. Update the graph *immediately*.
-                self.update_graph(flood_request.path_trace.clone());
+                PacketType::FloodResponse(flood_response) => {
+                    // Gestisce la risposta di flooding aggiornando il grafo
+                    log::info!("CommuncationServer {}: Received FloodResponse: {:?}", self.id, flood_response);
+                    self.update_graph(flood_response.path_trace);
+                }
+                PacketType::FloodRequest(flood_request) => { // Non più mut flood_request
+                    log::info!("CommunicationServer {}: Received FloodRequest {:?}", self.id, flood_request);
+                    // 1. Update the graph *immediately*.
+                    self.update_graph(flood_request.path_trace.clone());
 
-                // 2. Create a *new* path trace for the response.  This includes the server.
-                let mut response_path_trace = flood_request.path_trace.clone();
-                response_path_trace.push((self.id, NodeType::Server));
+                    // 2. Create a *new* path trace for the response.  This includes the server.
+                    let mut response_path_trace = flood_request.path_trace.clone();
+                    response_path_trace.push((self.id, NodeType::Server));
 
-                // 3. Create the FloodResponse.
-                let flood_response = FloodResponse {
-                    flood_id: flood_request.flood_id,
-                    path_trace: response_path_trace,  // Use the *new* path trace.
-                };
+                    // 3. Create the FloodResponse.
+                    let flood_response = FloodResponse {
+                        flood_id: flood_request.flood_id,
+                        path_trace: response_path_trace,  // Use the *new* path trace.
+                    };
 
-                // 4. Create the response packet.  Reverse the *original* path for routing.
-                let response_packet = Packet {
-                    pack_type: PacketType::FloodResponse(flood_response),
-                    routing_header: SourceRoutingHeader {
-                        hop_index: 0,
-                        hops: flood_request.path_trace.iter().rev().map(|(id, _)| *id).collect(),
-                    },
-                    session_id: packet.session_id,
-                };
+                    // 4. Create the response packet.  Reverse the *original* path for routing.
+                    let response_packet = Packet {
+                        pack_type: PacketType::FloodResponse(flood_response),
+                        routing_header: SourceRoutingHeader {
+                            hop_index: 0,
+                            hops: flood_request.path_trace.iter().rev().map(|(id, _)| *id).collect(),
+                        },
+                        session_id: packet.session_id,
+                    };
 
-                // 5. Send the response back to the source.
-                log::info!("CommuncationServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
-                let next_node = response_packet.routing_header.hops[0];
-                if let Some(sender) = self.packet_send.get(&next_node) {
+                    // 5. Send the response back to the source.
+                    log::info!("CommuncationServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
+                    let next_node = response_packet.routing_header.hops[0];
+                    if let Some(sender) = self.packet_send.get(&next_node) {
 
-                            match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
-                                Err(_) => {
-                                    log::warn!("CommunicationServer {}: Timeout sending packet to {}", self.id, next_node);
-                                }
-                                Ok(..)=>{
-                                    // Notifies the simulation controller of packet sending.
-                                    let _ = self
-                                        .sim_controller_send
-                                        .send(ServerEvent::PacketSent(response_packet.clone()));
-                                    log::info!("CommunicationServer {}: Sent FloodResponse back to {}", self.id, next_node);
-                                }
+                        match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
+                            Err(_) => {
+                                log::warn!("CommunicationServer {}: Timeout sending packet to {}", self.id, next_node);
                             }
-                        } else {
-                            log::warn!("CommunicationServer {}: No sender found for node {}", self.id, next_node);
+                            Ok(..)=>{
+                                // Notifies the simulation controller of packet sending.
+                                let _ = self
+                                    .sim_controller_send
+                                    .send(ServerEvent::PacketSent(response_packet.clone()));
+                                log::info!("CommunicationServer {}: Sent FloodResponse back to {}", self.id, next_node);
+                            }
                         }
+                    } else {
+                        log::warn!("CommunicationServer {}: No sender found for node {}", self.id, next_node);
+                    }
 
-            }
+                }
 
-            PacketType::Ack(ack) => {
-                log::info!("Communication server {}: ricevuto ack {:?}", self.id, ack);
-            }
-            PacketType::Nack(nack) => {
-                log::info!("Communication server {}: ricevuto nack {:?}", self.id, nack);
-            }
-            _ => {
-                log::error!("CommunicationServer {}: Received unhandled packet type", self.id);
+                PacketType::Ack(ack) => {
+                    log::info!("ContentServer {}: Received Ack {:?} from {}", self.id, ack, source_id);
+                    self.handle_ack(ack.clone(), packet.session_id);
+                }
+                PacketType::Nack(ref nack) => {
+                    log::info!("ContentServer {}: Received Nack {:?} from {}", self.id, nack, source_id);
+                    let drop_drone = packet.clone().routing_header.hops[0];
+                    // NACK HANDLING METHOD
+                    self.handle_nack(nack.clone(), packet.session_id, drop_drone);
+                }
+                _ => {
+                    log::error!("CommunicationServer {}: Received unhandled packet type", self.id);
+                }
             }
         }
     }
@@ -348,6 +367,10 @@ impl CommunicationServer {
             topology: HashSet::new(),
             node_types: HashMap::new(),
             registered_client: Vec::new(),
+            pending_messages: HashMap::new(),
+            acked_fragments: HashMap::new(),
+            nack_counter: HashMap::new(),
+            excluded_nodes: HashSet::new(),
         };
         log::info!("Communication server {} initialized", server.id);
 
@@ -448,6 +471,152 @@ impl CommunicationServer {
             log::warn!("CommunicationServer {}: No valid path to send Ack for fragment {}", self.id, fragment.fragment_index);
         }
 
+    }
+
+    fn handle_ack(&mut self, ack: Ack, session_id: u64) {
+        let fragment_index = ack.fragment_index;
+
+        // Removes from ack_counter if there is this packet
+        self.nack_counter.retain(|(f_idx, s_id, _), _| !(*f_idx == fragment_index && *s_id == session_id));
+
+        // updates acked_fragments
+        let acked = self.acked_fragments.entry(session_id).or_default();
+        acked.insert(fragment_index);
+
+        // Check whether all the fragments of this session have been acked
+        if let Some(fragments) = self.pending_messages.get(&session_id) {
+            let total_fragments = fragments.len() as u64;
+            if acked.len() as u64 == total_fragments {
+                self.pending_messages.remove(&session_id);
+                self.acked_fragments.remove(&session_id);
+                info!("ContentServer {}: All fragments for session {} have been acknowledged", self.id, session_id);
+            }
+        }
+    }
+
+    fn handle_nack(&mut self, nack: Nack, session_id: u64, id_drop_drone: NodeId) {
+        let key = (nack.fragment_index, session_id, id_drop_drone);
+
+        // Uses Entry to correctly handle counter initialization
+        let counter = self.nack_counter.entry(key).or_insert(0);
+        *counter += 1;
+
+        match nack.nack_type {
+            NackType::Dropped => {
+                if *counter > 5 {
+                    info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
+
+                    // Add the problematic node to excluded nodes
+                    self.excluded_nodes.insert(id_drop_drone);
+
+                    // Reconstruct the packet with a new path
+                    if let Some(fragments) = self.pending_messages.get(&session_id) {
+                        if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+                            if let Some(target_server) = packet.routing_header.hops.last() {
+                                if let Some(new_path) = self.compute_route_excluding(target_server) {
+                                    let mut new_packet = packet.clone();
+                                    new_packet.routing_header.hops = new_path;
+                                    new_packet.routing_header.hop_index = 1;
+
+                                    if let Some(next_hop) = new_packet.routing_header.hops.get(1) {
+                                        info!("Client {}: Resending fragment {} via new path: {:?}",
+                                        self.id, nack.fragment_index, new_packet.routing_header.hops);
+                                        self.send_packet_and_notify(new_packet.clone(), *next_hop); // Cloned here to fix borrow error
+
+                                        // Reset the counter after rerouting
+                                        self.nack_counter.remove(&key);
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    warn!("Client {}: Unable to find alternative path", self.id);
+                } else {
+                    // Standard resend
+                    if let Some(fragments) = self.pending_messages.get(&session_id) {
+                        if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+                            info!("Client {}: Attempt {} for fragment {}",
+                            self.id, counter, nack.fragment_index);
+                            self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
+                        }
+                    }
+                }
+            }
+            _ => {
+                // Handling other NACK types
+                self.network_discovery();
+                if let Some(fragments) = self.pending_messages.get(&session_id) {
+                    if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+                        self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
+                    }
+                }
+            }
+        }
+    }
+
+    fn compute_route_excluding(&self, target_server: &NodeId) -> Option<Vec<NodeId>> {
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        let mut predecessors = HashMap::new();
+
+        queue.push_back(self.id);
+        visited.insert(self.id);
+
+        while let Some(current_node) = queue.pop_front() {
+            if current_node == *target_server {
+                let mut path = Vec::new();
+                let mut current = *target_server;
+                while let Some(prev) = predecessors.get(&current) {
+                    path.push(current);
+                    current = *prev;
+                }
+                path.push(self.id);
+                path.reverse();
+                return Some(path);
+            }
+
+            // Iterate over neighbors excluding problematic nodes
+            for &(a, b) in &self.topology {
+                if a == current_node && !self.excluded_nodes.contains(&b) && !visited.contains(&b) {
+                    visited.insert(b);
+                    queue.push_back(b);
+                    predecessors.insert(b, a);
+                } else if b == current_node && !self.excluded_nodes.contains(&a) && !visited.contains(&a) {
+                    visited.insert(a);
+                    queue.push_back(a);
+                    predecessors.insert(a, b);
+                }
+            }
+        }
+        None
+    }
+
+    fn send_packet_and_notify(&self, packet: Packet, recipient_id: NodeId) {
+        if let Some(sender) = self.packet_send.get(&recipient_id) {
+            if let Err(e) = sender.send(packet.clone()) {
+                error!(
+                    "ContentServer {}: Error sending packet to {}: {:?}",
+                    self.id,
+                    recipient_id,
+                    e
+                );
+            } else {
+                info!(
+                    "ContentServer {}: Packet sent to {}: must arrive at {}",
+                    self.id,
+                    recipient_id,
+                    packet.routing_header.hops.last().unwrap(),
+                );
+
+                // Notifies the SC of packet sending.
+                let _ = self
+                    .sim_controller_send
+                    .send(ServerEvent::PacketSent(packet));
+            }
+        } else {
+            error!("ContentServer {}: No sender for node {}", self.id, recipient_id);
+        }
     }
 
 }
