@@ -207,11 +207,11 @@ impl DronegowskiServer for CommunicationServer {
                 }
 
                 PacketType::Ack(ack) => {
-                    log::info!("ContentServer {}: Received Ack {:?} from {}", self.id, ack, source_id);
+                    log::info!("CommunicationServer {}: Received Ack {:?} from {}", self.id, ack, source_id);
                     self.handle_ack(ack.clone(), packet.session_id);
                 }
                 PacketType::Nack(ref nack) => {
-                    log::info!("ContentServer {}: Received Nack {:?} from {}", self.id, nack, source_id);
+                    log::info!("CommunicationServer {}: Received Nack {:?} from {}", self.id, nack, source_id);
                     let drop_drone = packet.clone().routing_header.hops[0];
                     // NACK HANDLING METHOD
                     self.handle_nack(nack.clone(), packet.session_id, drop_drone);
@@ -493,7 +493,7 @@ impl CommunicationServer {
             if acked.len() as u64 == total_fragments {
                 self.pending_messages.remove(&session_id);
                 self.acked_fragments.remove(&session_id);
-                info!("ContentServer {}: All fragments for session {} have been acknowledged", self.id, session_id);
+                info!("CommunicationServer {}: All fragments for session {} have been acknowledged", self.id, session_id);
             }
         }
     }
@@ -600,14 +600,14 @@ impl CommunicationServer {
         if let Some(sender) = self.packet_send.get(&recipient_id) {
             if let Err(e) = sender.send(packet.clone()) {
                 error!(
-                    "ContentServer {}: Error sending packet to {}: {:?}",
+                    "CommunicationServer {}: Error sending packet to {}: {:?}",
                     self.id,
                     recipient_id,
                     e
                 );
             } else {
                 info!(
-                    "ContentServer {}: Packet sent to {}: must arrive at {}",
+                    "CommunicationServer {}: Packet sent to {}: must arrive at {}",
                     self.id,
                     recipient_id,
                     packet.routing_header.hops.last().unwrap(),
@@ -619,7 +619,7 @@ impl CommunicationServer {
                     .send(ServerEvent::PacketSent(packet));
             }
         } else {
-            error!("ContentServer {}: No sender for node {}", self.id, recipient_id);
+            error!("CommunicationServer {}: No sender for node {}", self.id, recipient_id);
         }
     }
 
