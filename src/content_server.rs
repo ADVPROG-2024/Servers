@@ -1,12 +1,12 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::time::Duration;
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{assembler, fragment_message, generate_unique_id};
 use dronegowski_utils::hosts::{ClientMessages, FileContent, ServerCommand, ServerEvent, ServerMessages, ServerType, TestMessage};
-use log::log;
+use log::{error, info, log, warn};
 use wg_2024::network::{NodeId, SourceRoutingHeader};
-use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
+use wg_2024::packet::{Ack, FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType, Packet, PacketType};
 use crate::DronegowskiServer;
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
@@ -109,14 +109,23 @@ impl MediaServer {
 
 pub struct ContentServer {
     id: NodeId,
-    sim_controller_send: Sender<ServerEvent>,           //Channel used to send commands to the SC
-    sim_controller_recv: Receiver<ServerCommand>,       //Channel used to receive commands from the SC
-    packet_send: HashMap<NodeId, Sender<Packet>>,       //Map containing the sending channels of neighbour nodes
-    packet_recv: Receiver<Packet>,                      //Channel used to receive packets from nodes
-    server_type: ServerType,
+    sim_controller_send: Sender<ServerEvent>,           // Channel used to send commands to the SC
+    sim_controller_recv: Receiver<ServerCommand>,       // Channel used to receive commands from the SC
+    packet_send: HashMap<NodeId, Sender<Packet>>,       // Map containing the sending channels of neighbour nodes
+    packet_recv: Receiver<Packet>,                      // Channel used to receive packets from nodes
+
+    server_type: ServerType,                            // Server Type
+
     topology: HashSet<(NodeId, NodeId)>,                // Edges of the graph
     node_types: HashMap<NodeId, NodeType>,              // Node types (Client, Drone, Server)
+
     message_storage: HashMap<u64, Vec<Fragment>>,       // Store for reassembling messages
+
+    pending_messages: HashMap<u64, Vec<Packet>>,        // Storage of not acked fragments
+    acked_fragments: HashMap<u64, HashSet<u64>>,        // storage of acked fragments
+    nack_counter: HashMap<(u64, u64, NodeId), u8>,
+    excluded_nodes: HashSet<NodeId>,
+
     text: TextServer,
     media: MediaServer,
 }
@@ -271,9 +280,13 @@ impl DronegowskiServer for ContentServer {
                 }
                 PacketType::Ack(ack) => {
                     log::info!("ContentServer {}: Received Ack {:?} from {}", self.id, ack, source_id);
+                    self.handle_ack(ack.clone(), packet.session_id);
                 }
-                PacketType::Nack(nack) => {
+                PacketType::Nack(ref nack) => {
                     log::info!("ContentServer {}: Received Nack {:?} from {}", self.id, nack, source_id);
+                    let drop_drone = packet.clone().routing_header.hops[0];
+                    // NACK HANDLING METHOD
+                    self.handle_nack(nack.clone(), packet.session_id, drop_drone);
                 }
             }
         }
@@ -464,6 +477,12 @@ impl ContentServer {
             message_storage: HashMap::new(),
             topology: HashSet::new(),
             node_types: HashMap::new(),
+
+            pending_messages: HashMap::new(),
+            nack_counter: HashMap::new(),
+            excluded_nodes: HashSet::new(),
+            acked_fragments: HashMap::new(),
+
             text: TextServer::new_from_folder(file_path),
             media: MediaServer::new_from_folder(media_path),
 
@@ -475,7 +494,7 @@ impl ContentServer {
     }
 
 
-    //message sending_method
+    //message sending_methods
     fn send_message(&mut self, message: ServerMessages, destination: NodeId) {
         log::info!("ContentServer {}: sending packet to {}", self.id, destination);
         let route=self.compute_best_path(destination).unwrap_or(Vec::new());
@@ -502,7 +521,6 @@ impl ContentServer {
             log::error!("ContentServer {}: There is no available route", self.id);
         }
     }
-
     fn send_ack(&mut self, packet: Packet, fragment: Fragment) {
         log::info!("ContentServer {}: Sending Ack for fragment {}", self.id, fragment.fragment_index);
 
@@ -534,6 +552,153 @@ impl ContentServer {
             log::warn!("ContentServer {}: No valid path to send Ack for fragment {}", self.id, fragment.fragment_index);
         }
 
+    }
+    fn send_packet_and_notify(&self, packet: Packet, recipient_id: NodeId) {
+        if let Some(sender) = self.packet_send.get(&recipient_id) {
+            if let Err(e) = sender.send(packet.clone()) {
+                error!(
+                    "ContentServer {}: Error sending packet to {}: {:?}",
+                    self.id,
+                    recipient_id,
+                    e
+                );
+            } else {
+                info!(
+                    "ContentServer {}: Packet sent to {}: must arrive at {}",
+                    self.id,
+                    recipient_id,
+                    packet.routing_header.hops.last().unwrap(),
+                );
+
+                // Notifies the SC of packet sending.
+                let _ = self
+                    .sim_controller_send
+                    .send(ServerEvent::PacketSent(packet));
+            }
+        } else {
+            error!("ContentServer {}: No sender for node {}", self.id, recipient_id);
+        }
+    }
+
+    // ack handling
+    fn handle_ack(&mut self, ack: Ack, session_id: u64) {
+        let fragment_index = ack.fragment_index;
+
+        // Removes from ack_counter if there is this packet
+        self.nack_counter.retain(|(f_idx, s_id, _), _| !(*f_idx == fragment_index && *s_id == session_id));
+
+        // updates acked_fragments
+        let acked = self.acked_fragments.entry(session_id).or_default();
+        acked.insert(fragment_index);
+
+        // Check whether all the fragments of this session have been acked
+        if let Some(fragments) = self.pending_messages.get(&session_id) {
+            let total_fragments = fragments.len() as u64;
+            if acked.len() as u64 == total_fragments {
+                self.pending_messages.remove(&session_id);
+                self.acked_fragments.remove(&session_id);
+                info!("ContentServer {}: All fragments for session {} have been acknowledged", self.id, session_id);
+            }
+        }
+    }
+
+
+    // nack handling
+    fn handle_nack(&mut self, nack: Nack, session_id: u64, id_drop_drone: NodeId) {
+        let key = (nack.fragment_index, session_id, id_drop_drone);
+
+        // Uses Entry to correctly handle counter initialization
+        let counter = self.nack_counter.entry(key).or_insert(0);
+        *counter += 1;
+
+        match nack.nack_type {
+            NackType::Dropped => {
+                if *counter > 5 {
+                    info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
+
+                    // Add the problematic node to excluded nodes
+                    self.excluded_nodes.insert(id_drop_drone);
+
+                    // Reconstruct the packet with a new path
+                    if let Some(fragments) = self.pending_messages.get(&session_id) {
+                        if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+                            if let Some(target_server) = packet.routing_header.hops.last() {
+                                if let Some(new_path) = self.compute_route_excluding(target_server) {
+                                    let mut new_packet = packet.clone();
+                                    new_packet.routing_header.hops = new_path;
+                                    new_packet.routing_header.hop_index = 1;
+
+                                    if let Some(next_hop) = new_packet.routing_header.hops.get(1) {
+                                        info!("Client {}: Resending fragment {} via new path: {:?}",
+                                        self.id, nack.fragment_index, new_packet.routing_header.hops);
+                                        self.send_packet_and_notify(new_packet.clone(), *next_hop); // Cloned here to fix borrow error
+
+                                        // Reset the counter after rerouting
+                                        self.nack_counter.remove(&key);
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    warn!("Client {}: Unable to find alternative path", self.id);
+                } else {
+                    // Standard resend
+                    if let Some(fragments) = self.pending_messages.get(&session_id) {
+                        if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+                            info!("Client {}: Attempt {} for fragment {}",
+                            self.id, counter, nack.fragment_index);
+                            self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
+                        }
+                    }
+                }
+            }
+            _ => {
+                // Handling other NACK types
+                self.network_discovery();
+                if let Some(fragments) = self.pending_messages.get(&session_id) {
+                    if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+                        self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
+                    }
+                }
+            }
+        }
+    }
+    fn compute_route_excluding(&self, target_server: &NodeId) -> Option<Vec<NodeId>> {
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        let mut predecessors = HashMap::new();
+
+        queue.push_back(self.id);
+        visited.insert(self.id);
+
+        while let Some(current_node) = queue.pop_front() {
+            if current_node == *target_server {
+                let mut path = Vec::new();
+                let mut current = *target_server;
+                while let Some(prev) = predecessors.get(&current) {
+                    path.push(current);
+                    current = *prev;
+                }
+                path.push(self.id);
+                path.reverse();
+                return Some(path);
+            }
+
+            // Iterate over neighbors excluding problematic nodes
+            for &(a, b) in &self.topology {
+                if a == current_node && !self.excluded_nodes.contains(&b) && !visited.contains(&b) {
+                    visited.insert(b);
+                    queue.push_back(b);
+                    predecessors.insert(b, a);
+                } else if b == current_node && !self.excluded_nodes.contains(&a) && !visited.contains(&a) {
+                    visited.insert(a);
+                    queue.push_back(a);
+                    predecessors.insert(a, b);
+                }
+            }
+        }
+        None
     }
 
 }
