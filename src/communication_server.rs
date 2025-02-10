@@ -562,12 +562,12 @@ impl CommunicationServer {
                             }
                         }
                     }
-                    warn!("Client {}: Unable to find alternative path", self.id);
+                    warn!("CommunicationServer {}: Unable to find alternative path", self.id);
                 } else {
                     // Standard resend
                     if let Some(fragments) = self.pending_messages.get(&session_id) {
                         if let Some(packet) = fragments.get(nack.fragment_index as usize) {
-                            info!("Client {}: Attempt {} for fragment {}",
+                            info!("Communication server {}: Attempt {} for fragment {}",
                             self.id, counter, nack.fragment_index);
                             self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
                         }
