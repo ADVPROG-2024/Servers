@@ -152,7 +152,7 @@ impl DronegowskiServer for ContentServer {
 
     // packet receiving
     fn handle_packet(&mut self, packet: Packet){
-        log::info!("ContentServer {}: Received packet {:?}", self.id, packet);
+        //log::info!("ContentServer {}: Received packet {:?}", self.id, packet);
         if let Some(source_id) = packet.routing_header.source(){
             let key = packet.session_id;
             match packet.pack_type {
@@ -181,37 +181,37 @@ impl DronegowskiServer for ContentServer {
                                             // handles the message in relation of its type
                                             match client_messages {
                                                 ClientMessages::ServerType =>{
-                                                    log::info!("ContentServer {}: Received server type request from {}", self.id, source_id);
+                                                    //log::info!("ContentServer {}: Received server type request from {}", self.id, source_id);
                                                     self.send_message(ServerMessages::ServerType(ServerType::Content), source_id);
                                                 },
                                                 ClientMessages::FilesList =>{
-                                                    log::info!("ContentServer {}: Received FilesList request from {}", self.id, source_id);
+                                                    //log::info!("ContentServer {}: Received FilesList request from {}", self.id, source_id);
                                                     let list = self.text.list_files();
-                                                    log::info!("ContentServer {}: sending FilesList to {}", self.id, source_id);
+                                                    //log::info!("ContentServer {}: sending FilesList to {}", self.id, source_id);
                                                     self.send_message(ServerMessages::FilesList(list), source_id);
                                                 },
                                                 ClientMessages::File(file_id) =>{
-                                                    log::info!("ContentServer {}: Received File request (file_id {}) from {}", self.id, file_id, source_id);
+                                                    //log::info!("ContentServer {}: Received File request (file_id {}) from {}", self.id, file_id, source_id);
                                                     match self.text.get_file_text(file_id) {
                                                         Some(text) => {
-                                                            log::info!("ContentServer {}: sending file (file_id {}) to {}", self.id, file_id, source_id);
+                                                            //log::info!("ContentServer {}: sending file (file_id {}) to {}", self.id, file_id, source_id);
                                                             self.send_message(ServerMessages::File(text), source_id);
                                                         },
                                                         None => {
-                                                            log::info!("ContentServer {}: file not found, sending error to {}", self.id, source_id);
+                                                            //log::info!("ContentServer {}: file not found, sending error to {}", self.id, source_id);
                                                             self.send_message(ServerMessages::Error("file not found".to_string()),source_id);
                                                         }
                                                     }
                                                 },
                                                 ClientMessages::Media(media_id) =>{
-                                                    log::info!("ContentServer {}: Received Media request (media_id {}) from {}", self.id, media_id, source_id);
+                                                    //log::info!("ContentServer {}: Received Media request (media_id {}) from {}", self.id, media_id, source_id);
                                                     match self.media.get_media(media_id) {
                                                         Some(media) => {
-                                                            log::info!("ContentServer {}: sending media (media_id {}) to {}", self.id, media_id, source_id);
+                                                            //log::info!("ContentServer {}: sending media (media_id {}) to {}", self.id, media_id, source_id);
                                                             self.send_message(ServerMessages::Media(media), source_id);
                                                         },
                                                         None => {
-                                                            log::info!("ContentServer {}: media not found, sending error to {}", self.id, source_id);
+                                                            //log::info!("ContentServer {}: media not found, sending error to {}", self.id, source_id);
                                                             self.send_message(ServerMessages::Error("media not found".to_string()),source_id)
                                                         },
                                                     }
@@ -279,7 +279,7 @@ impl DronegowskiServer for ContentServer {
                     }
                 }
                 PacketType::Ack(ack) => {
-                    log::info!("ContentServer {}: Received Ack {:?} from {}", self.id, ack, source_id);
+                    //log::info!("ContentServer {}: Received Ack {:?} from {}", self.id, ack, source_id);
                     self.handle_ack(ack.clone(), packet.session_id);
                 }
                 PacketType::Nack(ref nack) => {
@@ -372,15 +372,15 @@ impl DronegowskiServer for ContentServer {
     fn handle_command(&mut self, command: ServerCommand) {
         match command {
             ServerCommand::AddSender(id, sender) => {
-                log::info!("ContentServer {}: Received AddSender Command: add {}", self.id, id);
+                //log::info!("ContentServer {}: Received AddSender Command: add {}", self.id, id);
                 self.add_neighbor(id, sender);
             }
             ServerCommand::RemoveSender(id) => {
-                log::info!("ContentServer {}: Received RemoveSender Command: remove {}", self.id, id);
+                //log::info!("ContentServer {}: Received RemoveSender Command: remove {}", self.id, id);
                 self.remove_neighbor(id);
             }
             ServerCommand::ControllerShortcut(packet)=>{
-                info!("ContentServer {}: Received ControllerShortcut", self.id);
+                //info!("ContentServer {}: Received ControllerShortcut", self.id);
                 self.handle_packet(packet.clone());
             }
             _ =>{
@@ -500,11 +500,11 @@ impl ContentServer {
 
     //message sending_methods
     fn send_message(&mut self, message: ServerMessages, destination: NodeId) {
-        log::info!("ContentServer {}: sending packet to {}", self.id, destination);
+        //log::info!("ContentServer {}: sending packet to {}", self.id, destination);
         let route=self.compute_best_path(destination).unwrap_or(Vec::new());
-        log::info!("ContentServer {}: sending through route {:?}", self.id, route);
+        //log::info!("ContentServer {}: sending through route {:?}", self.id, route);
         if let Some(&neighbour_id) = route.get(1) {
-            log::info!("ContentServer {}: sending packet to {}", self.id, neighbour_id);
+            //log::info!("ContentServer {}: sending packet to {}", self.id, neighbour_id);
             if let Some(sender) = self.packet_send.get(&neighbour_id) {
 
                 let packets = fragment_message(&TestMessage::WebClientMessages(message), route, 1);
@@ -567,12 +567,12 @@ impl ContentServer {
                     e
                 );
             } else {
-                info!(
-                    "ContentServer {}: Packet sent to {}: must arrive at {}",
-                    self.id,
-                    recipient_id,
-                    packet.routing_header.hops.last().unwrap(),
-                );
+                // info!(
+                //     "ContentServer {}: Packet sent to {}: must arrive at {}",
+                //     self.id,
+                //     recipient_id,
+                //     packet.routing_header.hops.last().unwrap(),
+                // );
 
                 // Notifies the SC of packet sending.
                 let _ = self
@@ -601,7 +601,7 @@ impl ContentServer {
             if acked.len() as u64 == total_fragments {
                 self.pending_messages.remove(&session_id);
                 self.acked_fragments.remove(&session_id);
-                info!("ContentServer {}: All fragments for session {} have been acknowledged", self.id, session_id);
+                //info!("ContentServer {}: All fragments for session {} have been acknowledged", self.id, session_id);
             }
         }
     }

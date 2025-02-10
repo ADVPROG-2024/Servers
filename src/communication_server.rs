@@ -37,13 +37,13 @@ impl DronegowskiServer for CommunicationServer {
         loop {
             select_biased! {
                 recv(self.packet_recv) -> packet_res => {
-                    log::info!("CommuncationServer {}: Received packet {:?}", self.id, packet_res);
+                    //log::info!("CommuncationServer {}: Received packet {:?}", self.id, packet_res);
                     if let Ok(packet) = packet_res {
                         self.handle_packet(packet);
                     }
                 },
                 recv(self.sim_controller_recv) -> command_res => {
-                    log::info!("CommuncationServer {}: Received command {:?}", self.id, command_res);
+                    //log::info!("CommuncationServer {}: Received command {:?}", self.id, command_res);
                     if let Ok(command) = command_res {
                         self.handle_command(command);
                     }
@@ -87,7 +87,7 @@ impl DronegowskiServer for CommunicationServer {
     }
 
     fn handle_packet(&mut self, packet: Packet) {
-        log::info!("Server {}: Received packet: {:?}", self.id, packet); // Log the received packet
+        //log::info!("Server {}: Received packet: {:?}", self.id, packet); // Log the received packet
         if let Some(source_id) = packet.routing_header.source() {
             let client_id = packet.routing_header.source().unwrap(); // Identifica il client ID
             let key = packet.session_id; // Identifica la sessione
@@ -112,7 +112,7 @@ impl DronegowskiServer for CommunicationServer {
                                 // Tutti i frammenti sono stati ricevuti, tenta di ricostruire il messaggio
                                 match self.reconstruct_message(key) {
                                     Ok(message) => {
-                                        log::info!("Server {}: Message reassembled successfully.", self.id);
+                                        //log::info!("Server {}: Message reassembled successfully.", self.id);
                                         if let TestMessage::WebServerMessages(client_message) = message {
 
                                             // Sends the received message to the simulation controller.
@@ -122,15 +122,15 @@ impl DronegowskiServer for CommunicationServer {
 
                                             match client_message {
                                                 ClientMessages::ServerType => {
-                                                    log::info!("Communication server {}: Received server type request from {}", self.id, client_id);
+                                                    //log::info!("Communication server {}: Received server type request from {}", self.id, client_id);
                                                     self.send_my_type(client_id)
                                                 },
                                                 ClientMessages::RegistrationToChat => {
-                                                    log::info!("Communication server {}: Received RegistrationToChat request", self.id);
+                                                    //log::info!("Communication server {}: Received RegistrationToChat request", self.id);
                                                     self.register_client(client_id)
                                                 },
                                                 ClientMessages::ClientList =>{
-                                                    log::info!("Communication server {}: Received ClientList request", self.id);
+                                                    //log::info!("Communication server {}: Received ClientList request", self.id);
                                                     self.send_register_client(client_id);
                                                 },
                                                 ClientMessages::MessageFor(target_id, message) => {
@@ -158,7 +158,7 @@ impl DronegowskiServer for CommunicationServer {
                                                 },
                                                 _ => {
                                                     println!("Unknown ClientMessage received");
-                                                    log::info!("");
+                                                    //log::info!("");
                                                     if let Some(path) = self.compute_best_path(client_id) {
                                                         self.send_message(ServerMessages::Error(format!("Unknown ClientMessage received")), path);
                                                     } else {
@@ -230,7 +230,7 @@ impl DronegowskiServer for CommunicationServer {
                 }
 
                 PacketType::Ack(ack) => {
-                    log::info!("CommunicationServer {}: Received Ack {:?} from {}", self.id, ack, source_id);
+                    //log::info!("CommunicationServer {}: Received Ack {:?} from {}", self.id, ack, source_id);
                     self.handle_ack(ack.clone(), packet.session_id);
                 }
                 PacketType::Nack(ref nack) => {
@@ -249,15 +249,15 @@ impl DronegowskiServer for CommunicationServer {
     fn handle_command(&mut self, command: ServerCommand) {
         match command {
             ServerCommand::AddSender(id, sender) => {
-                log::info!("CommunicationServer {}: Received AddSender Command: add {}", self.id, id);
+                //log::info!("CommunicationServer {}: Received AddSender Command: add {}", self.id, id);
                 self.add_neighbor(id, sender);
             },
             ServerCommand::RemoveSender(id) => {
-                log::info!("CommunicationServer {}: Received RemoveSender Command: remove {}", self.id, id);
+                //log::info!("CommunicationServer {}: Received RemoveSender Command: remove {}", self.id, id);
                 self.remove_neighbor(id);
             },
             ServerCommand::ControllerShortcut(packet) => {
-                log::info!("CommunicationServer {}: Received ControllerShortcut Command: {:?}", self.id, packet);
+                //log::info!("CommunicationServer {}: Received ControllerShortcut Command: {:?}", self.id, packet);
                 self.handle_packet(packet);
             },
             _ =>{
@@ -267,7 +267,7 @@ impl DronegowskiServer for CommunicationServer {
     }
 
     fn update_graph(&mut self, path_trace: Vec<(NodeId, NodeType)>) {
-        log::info!("CommunicationServer {} : updating graph knowledge using path trace {:?}",self.id, path_trace);
+        //log::info!("CommunicationServer {} : updating graph knowledge using path trace {:?}",self.id, path_trace);
         for i in 0..path_trace.len() - 1 {
             let (node_a, _) = path_trace[i];
             let (node_b, _) = path_trace[i + 1];
@@ -355,8 +355,8 @@ impl DronegowskiServer for CommunicationServer {
         fn add_neighbor(&mut self, node_id: NodeId, sender: Sender<Packet>) {
             if let std::collections::hash_map::Entry::Vacant(e) = self.packet_send.entry(node_id) {
                 e.insert(sender);
-                log::info!("CommunicationServer {}: Successfully added {}", self.id, node_id);
-                log::info!("CommunicationServer {}: starting a new network discovery", self.id);
+                //log::info!("CommunicationServer {}: Successfully added {}", self.id, node_id);
+                //log::info!("CommunicationServer {}: starting a new network discovery", self.id);
                 self.network_discovery();
 
             } else {
@@ -367,8 +367,8 @@ impl DronegowskiServer for CommunicationServer {
         if self.packet_send.contains_key(&node_id) {
             self.packet_send.remove(&node_id);
             self.remove_from_topology(node_id);
-            log::info!("CommunicationServer {}: Successfully removed neighbour {}", self.id, node_id);
-            log::info!("CommunicationServer {}: starting a new network discovery", self.id);
+            //log::info!("CommunicationServer {}: Successfully removed neighbour {}", self.id, node_id);
+            //log::info!("CommunicationServer {}: starting a new network discovery", self.id);
             self.network_discovery();
         } else {
             log::error!("CommunicationServer {}: the {} is not a neighbour", self.id, node_id);
@@ -399,7 +399,7 @@ impl CommunicationServer {
             nack_counter: HashMap::new(),
             excluded_nodes: HashSet::new(),
         };
-        log::info!("Communication server {} initialized", server.id);
+        //log::info!("Communication server {} initialized", server.id);
 
         server.network_discovery();
 
@@ -408,7 +408,7 @@ impl CommunicationServer {
 
     fn send_my_type(&mut self, client_id: NodeId) {
         if let Some(best_path) = self.compute_best_path(client_id) {
-            log::info!("Communication server {}: sending server type to {}", self.id, client_id);
+            //log::info!("Communication server {}: sending server type to {}", self.id, client_id);
             self.send_message(ServerMessages::ServerType(self.clone().server_type), best_path);
         }
     }
@@ -420,7 +420,7 @@ impl CommunicationServer {
                 log::error!("Communication server {}: client {} already registered", self.id, client_id);
                 self.send_message(ServerMessages::RegistrationError("client already registered".to_string()), path);
             } else {
-                log::info!("Communication server {}: client {} registered", self.id, client_id);
+                //log::info!("Communication server {}: client {} registered", self.id, client_id);
                 self.registered_client.push(client_id.clone());
                 self.send_message(ServerMessages::RegistrationOk, path);
             }
@@ -429,7 +429,7 @@ impl CommunicationServer {
 
     fn send_register_client(&mut self, client_id: NodeId) {
         if let Some(hops) = self.compute_best_path(client_id) {
-            log::info!("Communication server {}: sending do client {} registered clients", self.id, client_id);
+            //log::info!("Communication server {}: sending do client {} registered clients", self.id, client_id);
             let data = ServerMessages::ClientList(self.clone().registered_client);
             self.send_message(data, hops)
         }
@@ -437,7 +437,7 @@ impl CommunicationServer {
 
     fn forward_message(&mut self, target_id: NodeId, client_id: NodeId, message: String) {
         if let Some(hops) = self.compute_best_path(target_id) {
-            log::info!("Communication server {}: sending message to addressee {}", self.id, target_id);
+            //log::info!("Communication server {}: sending message to addressee {}", self.id, target_id);
             let final_message = ServerMessages::MessageFrom(client_id, message);
             self.send_message(final_message, hops);
         }
@@ -445,7 +445,7 @@ impl CommunicationServer {
 
     fn send_message(&mut self, message: ServerMessages, route: Vec<NodeId>) {
         if let Some(&neighbour_id) = route.get(1) {
-            log::info!("Communication server {}: sending packet to {}", self.id, neighbour_id);
+            //log::info!("Communication server {}: sending packet to {}", self.id, neighbour_id);
             if let Some(sender) = self.packet_send.get(&neighbour_id) {
                 //let serialized_data = bincode::serialize(&message).expect("Serialization failed");
                 let packets = fragment_message(&TestMessage::WebClientMessages(message), route, 1);
@@ -467,7 +467,7 @@ impl CommunicationServer {
     }
 
     fn send_ack(&mut self, packet: Packet, fragment: Fragment) {
-        log::info!("CommunicationServer {}: Sending Ack for fragment {}", self.id, fragment.fragment_index);
+        //log::info!("CommunicationServer {}: Sending Ack for fragment {}", self.id, fragment.fragment_index);
 
         let reversed_hops: Vec<NodeId> = packet.routing_header.hops.iter().rev().cloned().collect();
         let ack_routing_header = SourceRoutingHeader {
@@ -483,7 +483,7 @@ impl CommunicationServer {
 
         if let Some(next_hop) = ack_packet.routing_header.hops.get(1).cloned() {
 
-            log::info!("CommunicationServer {}: sending ack {:?} to {}", self.id, ack_packet, next_hop);
+            //log::info!("CommunicationServer {}: sending ack {:?} to {}", self.id, ack_packet, next_hop);
             if let Some(sender) = self.packet_send.get(&next_hop) {
                 sender.send(ack_packet.clone()).expect("Error occurred sending the ack to the neighbour.");
                 // Notifies the simulation controller of packet sending.
@@ -516,7 +516,7 @@ impl CommunicationServer {
             if acked.len() as u64 == total_fragments {
                 self.pending_messages.remove(&session_id);
                 self.acked_fragments.remove(&session_id);
-                info!("CommunicationServer {}: All fragments for session {} have been acknowledged", self.id, session_id);
+                //info!("CommunicationServer {}: All fragments for session {} have been acknowledged", self.id, session_id);
             }
         }
     }
