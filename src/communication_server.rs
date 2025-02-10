@@ -267,7 +267,7 @@ impl DronegowskiServer for CommunicationServer {
     }
 
     fn update_graph(&mut self, path_trace: Vec<(NodeId, NodeType)>) {
-        //log::info!("CommunicationServer {} : updating graph knowledge using path trace {:?}",self.id, path_trace);
+        log::info!("CommunicationServer {} : updating graph knowledge using path trace {:?}",self.id, path_trace);
         for i in 0..path_trace.len() - 1 {
             let (node_a, _) = path_trace[i];
             let (node_b, _) = path_trace[i + 1];
