@@ -507,7 +507,11 @@ impl ContentServer {
             //log::info!("ContentServer {}: sending packet to {}", self.id, neighbour_id);
             if let Some(sender) = self.packet_send.get(&neighbour_id) {
 
-                let packets = fragment_message(&TestMessage::WebClientMessages(message), route, 1);
+                let session_id = generate_unique_id();
+
+                let packets = fragment_message(&TestMessage::WebClientMessages(message), route, session_id);
+
+                self.pending_messages.insert(session_id, packets.clone());
 
                 for mut packet in packets {
                     packet.routing_header.hop_index = 1;
