@@ -137,11 +137,24 @@ impl DronegowskiServer for CommunicationServer {
                                                     if self.registered_client.contains(&target_id) {
                                                         self.forward_message(target_id, client_id, message)
                                                     } else {
-                                                        println!("target client not registered");
+                                                        log::info!("");
+                                                        if let Some(path) = self.compute_best_path(target_id) {
+                                                            self.send_message(ServerMessages::Error(format!("{} not registered to server", target_id)), path);
+                                                        } else {
+                                                            log::error!("Communication server {}: path to {} not found", self.id, target_id);
+                                                        }
                                                     }
 
                                                 },
-                                                _ => println!("Unknown ClientMessage received"),
+                                                _ => {
+                                                    println!("Unknown ClientMessage received");
+                                                    log::info!("");
+                                                    if let Some(path) = self.compute_best_path(client_id) {
+                                                        self.send_message(ServerMessages::Error(format!("Unknown ClientMessage received")), path);
+                                                    } else {
+                                                        log::error!("Communication server {}: path to {} not found", self.id, client_id);
+                                                    }
+                                                },
                                             }
                                         }
                                     }
