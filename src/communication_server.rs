@@ -228,11 +228,15 @@ impl DronegowskiServer for CommunicationServer {
             ServerCommand::AddSender(id, sender) => {
                 log::info!("CommunicationServer {}: Received AddSender Command: add {}", self.id, id);
                 self.add_neighbor(id, sender);
-            }
+            },
             ServerCommand::RemoveSender(id) => {
                 log::info!("CommunicationServer {}: Received RemoveSender Command: remove {}", self.id, id);
                 self.remove_neighbor(id);
-            }
+            },
+            ServerCommand::ControllerShortcut(packet) => {
+                log::info!("CommunicationServer {}: Received ControllerShortcut Command: {:?}", self.id, packet);
+                self.handle_packet(packet);
+            },
             _ =>{
                 log::error!("CommunicationServer {}: Received unhandled ServerCommand type", self.id);
             }

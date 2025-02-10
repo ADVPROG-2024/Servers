@@ -379,6 +379,10 @@ impl DronegowskiServer for ContentServer {
                 log::info!("ContentServer {}: Received RemoveSender Command: remove {}", self.id, id);
                 self.remove_neighbor(id);
             }
+            ServerCommand::ControllerShortcut(packet)=>{
+                info!("ContentServer {}: Received ControllerShortcut", self.id);
+                self.handle_packet(packet.clone());
+            }
             _ =>{
                 log::error!("ContentServer {}: Received unhandled ServerCommand type", self.id);
             }
