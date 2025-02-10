@@ -138,10 +138,10 @@ impl DronegowskiServer for CommunicationServer {
                                                         self.forward_message(target_id, client_id, message)
                                                     } else {
                                                         log::error!("client or target not registered");
-                                                        if let Some(path) = self.compute_best_path(target_id) {
-                                                            self.send_message(ServerMessages::Error(format!("{} not registered to server", target_id)), path);
+                                                        if let Some(path) = self.compute_best_path(client_id) {
+                                                            self.send_message(ServerMessages::Error(format!("{} not registered to server", client_id)), path);
                                                         } else {
-                                                            log::error!("Communication server {}: path to {} not found", self.id, target_id);
+                                                            log::error!("Communication server {}: path to {} not found", self.id, client_id);
                                                         }
                                                     }
 
