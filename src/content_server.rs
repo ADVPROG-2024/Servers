@@ -221,6 +221,7 @@ impl DronegowskiServer for ContentServer {
                 PacketType::FloodRequest(flood_request) => {
                     log::info!("ContentServer {}: Received FloodRequest: {:?}", self.id, flood_request);
 
+                    // push myself in the path trace
                     let mut response_path_trace = flood_request.path_trace.clone();
                     response_path_trace.push((self.id, NodeType::Server));
 
@@ -229,6 +230,7 @@ impl DronegowskiServer for ContentServer {
                         path_trace: response_path_trace,
                     };
 
+                    // build the flood response packet
                     let response_packet = Packet {
                         pack_type: PacketType::FloodResponse(flood_response),
                         routing_header: SourceRoutingHeader {
@@ -247,6 +249,10 @@ impl DronegowskiServer for ContentServer {
                             }
                             Ok(..)=>{
                                 log::info!("ContentServer {}: Sent FloodResponse back to {}", self.id, next_node);
+                                // notify the SC that I sent a flood_response
+                                let _ = self
+                                    .sim_controller_send
+                                    .send(ServerEvent::PacketSent(response_packet.clone()));
                             }
                         }
                     } else {
@@ -398,14 +404,24 @@ impl DronegowskiServer for ContentServer {
 
         for (node_id, sender) in &self.packet_send {
             log::info!("ContentServer {}: sending flood request to {}", self.id, node_id);
-            let _ = sender.send(Packet {
+
+            // build the flood_request packets
+            let flood_request_packet = Packet {
                 pack_type: PacketType::FloodRequest(flood_request.clone()),
                 routing_header: SourceRoutingHeader {
                     hop_index: 0,
                     hops: vec![self.id, *node_id],
                 },
                 session_id: flood_request.flood_id,
-            });
+            };
+
+            // send the flood_request
+            let _ = sender.send(flood_request_packet.clone());
+
+            // notify the SC that I sent a flood_request
+            let _ = self
+                .sim_controller_send
+                .send(ServerEvent::PacketSent(flood_request_packet.clone()));
         }
     }
     fn update_graph(&mut self, path_trace: Vec<(NodeId, NodeType)>) {
@@ -462,7 +478,12 @@ impl ContentServer {
 
                 for mut packet in packets {
                     packet.routing_header.hop_index = 1;
-                    sender.send(packet).expect("Error occurred sending the message to the neighbour.");
+                    sender.send(packet.clone()).expect("Error occurred sending the message to the neighbour.");
+
+                    // notify the SC that I sent a message
+                    let _ = self
+                        .sim_controller_send
+                        .send(ServerEvent::PacketSent(packet.clone()));
                 }
             } else {
                 log::error!("ContentServer {}: Neighbour {} not found!", self.id, neighbour_id);
@@ -491,7 +512,10 @@ impl ContentServer {
 
             log::info!("ContentServer {}: sending ack {:?} to {}", self.id, ack_packet, next_hop);
             if let Some(sender) = self.packet_send.get(&next_hop) {
-                sender.send(ack_packet).expect("Error occurred sending the ack to the neighbour.");
+                sender.send(ack_packet.clone()).expect("Error occurred sending the ack to the neighbour.");
+                let _ = self
+                    .sim_controller_send
+                    .send(ServerEvent::PacketSent(ack_packet.clone()));
             } else {
                 log::error!("ContentServer {}: Neighbour {} not found!", self.id, next_hop);
             }
