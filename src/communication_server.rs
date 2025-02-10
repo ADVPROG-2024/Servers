@@ -100,6 +100,12 @@ impl DronegowskiServer for CommunicationServer {
                                 Ok(message) => {
                                     log::info!("Server {}: Message reassembled successfully.", self.id);
                                     if let TestMessage::WebServerMessages(client_message) = message {
+
+                                        // Sends the received message to the simulation controller.
+                                        let _ = self
+                                            .sim_controller_send
+                                            .send(ServerEvent::MessageReceived(TestMessage::WebServerMessages(client_message.clone())));
+
                                         match client_message {
                                             ClientMessages::ServerType => {
                                                 log::info!("Communication server {}: Received server type request from {}", self.id, client_id);

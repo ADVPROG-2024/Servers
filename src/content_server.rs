@@ -163,6 +163,13 @@ impl DronegowskiServer for ContentServer {
                                 match self.reconstruct_message(key) {
                                     Ok(message) => {
                                         if let TestMessage::WebServerMessages(client_messages) = message {
+
+                                            // Sends the received message to the simulation controller.
+                                            let _ = self
+                                                .sim_controller_send
+                                                .send(ServerEvent::MessageReceived(TestMessage::WebServerMessages(client_messages.clone())));
+
+                                            // handles the message in relation of its type
                                             match client_messages {
                                                 ClientMessages::ServerType =>{
                                                     log::info!("ContentServer {}: Received server type request from {}", self.id, source_id);
@@ -200,7 +207,10 @@ impl DronegowskiServer for ContentServer {
                                                         },
                                                     }
                                                 },
-                                                _ => {log::error!("ContentServer {}: Unkown message type", self.id);},
+                                                _ => {
+                                                    self.send_message(ServerMessages::Error("Unknown message type".to_string()), source_id);
+                                                    log::error!("ContentServer {}: Unknown message type", self.id);
+                                                },
                                             }
                                         }
                                     }
