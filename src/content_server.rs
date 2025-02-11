@@ -253,7 +253,7 @@ impl DronegowskiServer for ContentServer {
                     // build the flood response packet
                     let flood_response = FloodResponse {
                         flood_id: flood_request.flood_id,
-                        path_trace: response_path_trace,
+                        path_trace: response_path_trace.clone(),
                     };
                     let response_packet = Packet {
                         pack_type: PacketType::FloodResponse(flood_response),
