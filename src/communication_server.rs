@@ -417,7 +417,7 @@ impl CommunicationServer {
         // Forward a message from one client to another
         if let Some(hops) = self.compute_best_path(target_id) {
             let final_message = ServerMessages::MessageFrom(client_id, message);
-            self.send_message(final_message, client_id);
+            self.send_message(final_message, target_id);
         }
     }
 
