@@ -629,7 +629,7 @@ impl ContentServer {
 
         match nack.nack_type {
             NackType::Dropped => {
-                if *counter > 5 {
+                if *counter > 10 {
                     //info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
 
                     // Add the problematic node to excluded nodes
