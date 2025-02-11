@@ -188,22 +188,22 @@ impl DronegowskiServer for CommunicationServer {
                     // Create the FloodResponse
                     let flood_response = FloodResponse {
                         flood_id: flood_request.flood_id,
-                        path_trace: response_path_trace,  // Use the new path trace
+                        path_trace: response_path_trace.clone(),  // Use the new path trace
                     };
 
                     // Create the response packet with reversed routing path
                     let response_packet = Packet {
                         pack_type: PacketType::FloodResponse(flood_response),
                         routing_header: SourceRoutingHeader {
-                            hop_index: 0,
-                            hops: flood_request.path_trace.iter().rev().map(|(id, _)| *id).collect(),
+                            hop_index: 1,
+                            hops: response_path_trace.iter().rev().map(|(id, _)| *id).collect(),
                         },
                         session_id: packet.session_id,
                     };
 
                     // Send the FloodResponse back to the source
                     log::info!("CommuncationServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
-                    let next_node = response_packet.routing_header.hops[0];
+                    let next_node = response_packet.routing_header.hops[1];
                     self.send_packet_and_notify(packet.clone(), next_node);
 
                 }
