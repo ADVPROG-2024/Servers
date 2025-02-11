@@ -177,7 +177,7 @@ impl DronegowskiServer for CommunicationServer {
                     // Handle FloodResponse to update the network graph
                     self.update_graph(flood_response.path_trace);
                 }
-                PacketType::FloodRequest(flood_request) => {
+                PacketType::FloodRequest(ref flood_request) => {
                     // Update the graph with the path trace from the FloodRequest
                     self.update_graph(flood_request.path_trace.clone());
 
