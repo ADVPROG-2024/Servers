@@ -258,7 +258,7 @@ impl DronegowskiServer for ContentServer {
                     let response_packet = Packet {
                         pack_type: PacketType::FloodResponse(flood_response),
                         routing_header: SourceRoutingHeader {
-                            hop_index: 0,
+                            hop_index: 1,
                             hops: flood_request.path_trace.iter().rev().map(|(id, _)| *id).collect(),
                         },
                         session_id: packet.session_id,
