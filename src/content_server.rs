@@ -186,7 +186,7 @@ impl DronegowskiServer for ContentServer {
                                             // handles the message in relation of its type
                                             match client_messages {
                                                 ClientMessages::ServerType =>{
-                                                    //log::info!("ContentServer {}: Received server type request from {}", self.id, source_id);
+                                                    log::info!("ContentServer {}: Received server type request from {}", self.id, source_id);
                                                     self.send_message(ServerMessages::ServerType(ServerType::Content), source_id);
                                                 },
                                                 ClientMessages::FilesList =>{
@@ -237,13 +237,13 @@ impl DronegowskiServer for ContentServer {
                     }
                 }
                 PacketType::FloodResponse(flood_response) => {
-                    //log::info!("ContentServer {}: Received FloodResponse: {:?}", self.id, flood_response);
+                    log::info!("ContentServer {}: Received FloodResponse: {:?}", self.id, flood_response);
 
                     // update the graph knowledge based on the new FloodResponse
                     self.update_graph(flood_response.path_trace);
                 }
                 PacketType::FloodRequest(flood_request) => {
-                    //log::info!("ContentServer {}: Received FloodRequest: {:?}", self.id, flood_request);
+                    log::info!("ContentServer {}: Received FloodRequest: {:?}", self.id, flood_request);
 
                     // push myself in the path trace
                     let mut response_path_trace = flood_request.path_trace.clone();
@@ -264,7 +264,7 @@ impl DronegowskiServer for ContentServer {
                         session_id: packet.session_id,
                     };
 
-                    //log::info!("ContentServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
+                    log::info!("ContentServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
                     // send the flood response
                     let next_node = response_packet.routing_header.hops[0];
 
