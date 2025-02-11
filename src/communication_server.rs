@@ -14,36 +14,42 @@ use crate::DronegowskiServer;
 
 #[derive(Clone)]
 pub struct CommunicationServer {
-    id: NodeId,
-    sim_controller_send: Sender<ServerEvent>,           //Channel used to send commands to the SC
-    sim_controller_recv: Receiver<ServerCommand>,       //Channel used to receive commands from the SC
-    packet_send: HashMap<NodeId, Sender<Packet>>,       //Map containing the sending channels of neighbour nodes
-    packet_recv: Receiver<Packet>,                      //Channel used to receive packets from nodes
-    topology: HashSet<(NodeId, NodeId)>,                // Edges of the graph
-    node_types: HashMap<NodeId, NodeType>,              // Node types (Client, Drone, Server)
-    message_storage: HashMap<u64, Vec<Fragment>>,       // Store for reassembling messages
-    server_type: ServerType,
-    registered_client: Vec<NodeId>,                     //typology of the server
+    id: NodeId,  // Unique identifier for the server
 
-    pending_messages: HashMap<u64, Vec<Packet>>,        // Storage of not acked fragments
-    acked_fragments: HashMap<u64, HashSet<u64>>,        // storage of acked fragments
-    nack_counter: HashMap<(u64, u64, NodeId), u8>,
-    excluded_nodes: HashSet<NodeId>,
+    // Channels for communication
+    sim_controller_send: Sender<ServerEvent>,           // Channel to send commands to the Simulation Controller (SC)
+    sim_controller_recv: Receiver<ServerCommand>,       // Channel to receive commands from the SC
+    packet_send: HashMap<NodeId, Sender<Packet>>,       // Map of sending channels to neighbor nodes
+    packet_recv: Receiver<Packet>,                      // Channel to receive packets from nodes
+
+    // Network-related fields
+    topology: HashSet<(NodeId, NodeId)>,                // Edges of the network graph
+    node_types: HashMap<NodeId, NodeType>,              // Types of nodes (Client, Drone, Server)
+    message_storage: HashMap<u64, Vec<Fragment>>,       // Storage for reassembling fragmented messages
+    server_type: ServerType,                            // Type of the server (e.g., Communication)
+    registered_client: Vec<NodeId>,                     // List of registered clients
+
+    // Fields for handling acknowledgments (ACKs) and negative acknowledgments (NACKs)
+    pending_messages: HashMap<u64, Vec<Packet>>,        // Storage for not yet acknowledged fragments
+    acked_fragments: HashMap<u64, HashSet<u64>>,        // Storage for acknowledged fragments
+    nack_counter: HashMap<(u64, u64, NodeId), u8>,      // Counter for NACKs per fragment, session, and node
+    excluded_nodes: HashSet<NodeId>,                    // Nodes excluded from routing due to failures
 }
 
 impl DronegowskiServer for CommunicationServer {
 
     fn run(&mut self) {
         loop {
+            // Use select_biased to prioritize packet reception over command reception
             select_biased! {
                 recv(self.packet_recv) -> packet_res => {
-                    //log::info!("CommuncationServer {}: Received packet {:?}", self.id, packet_res);
+                    // Handle received packet from neighbors
                     if let Ok(packet) = packet_res {
                         self.handle_packet(packet);
                     }
                 },
                 recv(self.sim_controller_recv) -> command_res => {
-                    //log::info!("CommuncationServer {}: Received command {:?}", self.id, command_res);
+                    // Handle received command from the Simulation Controller
                     if let Ok(command) = command_res {
                         self.handle_command(command);
                     }
@@ -53,20 +59,20 @@ impl DronegowskiServer for CommunicationServer {
     }
 
     fn network_discovery(&self) {
-        log::info!("CommunicationServer {}: starting Network discovery", self.id);
+        // Start network discovery by creating a path trace
         let mut path_trace = Vec::new();
         path_trace.push((self.id, NodeType::Server));
 
-        // Send flood_request to the neighbour nodes
+        // Create a FloodRequest to discover the network
         let flood_request = FloodRequest {
-            flood_id: generate_unique_id(),
-            initiator_id: self.id,
-            path_trace,
+            flood_id: generate_unique_id(),  // Generate a unique ID for the flood request
+            initiator_id: self.id,          // ID of the initiating server
+            path_trace,                      // Path trace to track the route
         };
 
+        // Send the FloodRequest to all neighbor nodes
         for (node_id, sender) in &self.packet_send {
-            log::info!("CommunicationServer {}: sending flood request to {}", self.id, node_id);
-            // build the flood_request packets
+            // Create a packet for the FloodRequest
             let flood_request_packet = Packet {
                 pack_type: PacketType::FloodRequest(flood_request.clone()),
                 routing_header: SourceRoutingHeader {
@@ -76,10 +82,10 @@ impl DronegowskiServer for CommunicationServer {
                 session_id: flood_request.flood_id,
             };
 
-            // send the flood_request
+            // Send the FloodRequest packet to the neighbor
             let _ = sender.send(flood_request_packet.clone());
 
-            // notify the SC that I sent a flood_request
+            // Notify the Simulation Controller that a FloodRequest was sent
             let _ = self
                 .sim_controller_send
                 .send(ServerEvent::PacketSent(flood_request_packet.clone()));
@@ -87,88 +93,79 @@ impl DronegowskiServer for CommunicationServer {
     }
 
     fn handle_packet(&mut self, packet: Packet) {
-        //log::info!("Server {}: Received packet: {:?}", self.id, packet); // Log the received packet
-        if let Some(source_id) = packet.routing_header.source() {
-            let client_id = packet.routing_header.source().unwrap(); // Identifica il client ID
-            let key = packet.session_id; // Identifica la sessione
+        // Handle received packet
+        if let Some(source_id) = packet.routing_header.source() {  // Get the source of the packet
+            let client_id = packet.routing_header.source().unwrap();  // Identify the client ID
+            let key = packet.session_id;  // Identify the session ID
             match packet.pack_type {
                 PacketType::MsgFragment(ref fragment) => {
-                    //log::info!("CommuncationServer {}: Received MsgFragment from {}, session: {}, index: {}, total: {}",self.id, client_id, key, fragment.clone().fragment_index, fragment.total_n_fragments);
+                    // Handle received message fragment from a client
 
-                    // send ack of fragment
+                    // Send an ACK for the received fragment
                     self.send_ack(packet.clone(), fragment.clone());
 
-                    // Aggiunta del frammento al message_storage
+                    // Add the fragment to the message storage for reassembly
                     self.message_storage
                         .entry(key)
                         .or_insert_with(Vec::new)
                         .push(fragment.clone());
-                    //log::info!("CommunicationServer {}: fragment {} added to message storage", self.id, fragment.clone().fragment_index);
 
-                    // Verifica se tutti i frammenti sono stati ricevuti
+                    // Check if all fragments have arrived
                     if let Some(fragments) = self.message_storage.get(&key) {
                         if let Some(first_fragment) = fragments.first() {
                             if fragments.len() as u64 == first_fragment.total_n_fragments {
-                                // Tutti i frammenti sono stati ricevuti, tenta di ricostruire il messaggio
+                                // All fragments have arrived, start reassembling the message
                                 match self.reconstruct_message(key) {
                                     Ok(message) => {
-                                        //log::info!("Server {}: Message reassembled successfully.", self.id);
+                                        // Message reassembled successfully
                                         if let TestMessage::WebServerMessages(client_message) = message {
 
-                                            // Sends the received message to the simulation controller.
+                                            // Send the received message to the Simulation Controller
                                             let _ = self
                                                 .sim_controller_send
                                                 .send(ServerEvent::MessageReceived(TestMessage::WebServerMessages(client_message.clone())));
 
-                                            match client_message {
+                                            match client_message {  // Handle different types of client messages
                                                 ClientMessages::ServerType => {
-                                                    //log::info!("Communication server {}: Received server type request from {}", self.id, client_id);
+                                                    // Send the server type to the client
                                                     self.send_my_type(client_id)
                                                 },
                                                 ClientMessages::RegistrationToChat => {
-                                                    //log::info!("Communication server {}: Received RegistrationToChat request", self.id);
+                                                    // Register the client to the server
                                                     self.register_client(client_id)
                                                 },
-                                                ClientMessages::ClientList =>{
-                                                    //log::info!("Communication server {}: Received ClientList request", self.id);
+                                                ClientMessages::ClientList => {
+                                                    // Send the list of registered clients to the client
                                                     self.send_register_client(client_id);
                                                 },
                                                 ClientMessages::MessageFor(target_id, message) => {
+                                                    // Check if both source and target clients are registered
                                                     if self.registered_client.contains(&client_id) {
                                                         if self.registered_client.contains(&target_id) {
+                                                            // Forward the message to the target client
                                                             self.forward_message(target_id, client_id, message)
                                                         } else {
-                                                            log::error!("target not registered");
-                                                            if let Some(path) = self.compute_best_path(client_id) {
-                                                                self.send_message(ServerMessages::Error(format!("{} not registered to server", target_id)), path);
-                                                            } else {
-                                                                log::error!("Communication server {}: path to {} not found", self.id, client_id);
-                                                            }
+                                                            // Target client is not registered
+                                                            log::error!("Target client not registered");
+                                                            // Send an error message to the client
+                                                            self.send_message(ServerMessages::Error(format!("{} not registered to server", target_id)), client_id);
                                                         }
-
                                                     } else {
-                                                        log::error!("client not registered");
-                                                        if let Some(path) = self.compute_best_path(client_id) {
-                                                            self.send_message(ServerMessages::Error(format!("{} not registered to server", client_id)), path);
-                                                        } else {
-                                                            log::error!("Communication server {}: path to {} not found", self.id, client_id);
-                                                        }
+                                                        // Source client is not registered
+                                                        log::error!("Client not registered");
+                                                        // Send an error message to the client
+                                                        self.send_message(ServerMessages::Error(format!("{} not registered to server", client_id)), client_id);
                                                     }
 
                                                 },
                                                 _ => {
-                                                    println!("Unknown ClientMessage received");
-                                                    //log::info!("");
-                                                    if let Some(path) = self.compute_best_path(client_id) {
-                                                        self.send_message(ServerMessages::Error(format!("Unknown ClientMessage received")), path);
-                                                    } else {
-                                                        log::error!("Communication server {}: path to {} not found", self.id, client_id);
-                                                    }
+                                                    // Handle unknown client messages
+                                                    self.send_message(ServerMessages::Error(format!("Unknown ClientMessage received")), client_id);
                                                 },
                                             }
                                         }
                                     }
-                                    Err(e) => {
+                                    Err(e) => {  // Error occurred during message reassembly
                                         println!("Error reconstructing the message: {}", e);
                                     }
                                 }
@@ -177,26 +174,24 @@ impl DronegowskiServer for CommunicationServer {
                     }
                 }
                 PacketType::FloodResponse(flood_response) => {
-                    // Gestisce la risposta di flooding aggiornando il grafo
-                    log::info!("CommuncationServer {}: Received FloodResponse: {:?}", self.id, flood_response);
+                    // Handle FloodResponse to update the network graph
                     self.update_graph(flood_response.path_trace);
                 }
-                PacketType::FloodRequest(flood_request) => { // Non più mut flood_request
-                    log::info!("CommunicationServer {}: Received FloodRequest {:?}", self.id, flood_request);
-                    // 1. Update the graph *immediately*.
+                PacketType::FloodRequest(flood_request) => {
+                    // Update the graph with the path trace from the FloodRequest
                     self.update_graph(flood_request.path_trace.clone());
 
-                    // 2. Create a *new* path trace for the response.  This includes the server.
+                    // Create a new path trace for the FloodResponse, including this server
                     let mut response_path_trace = flood_request.path_trace.clone();
                     response_path_trace.push((self.id, NodeType::Server));
 
-                    // 3. Create the FloodResponse.
+                    // Create the FloodResponse
                     let flood_response = FloodResponse {
                         flood_id: flood_request.flood_id,
-                        path_trace: response_path_trace,  // Use the *new* path trace.
+                        path_trace: response_path_trace,  // Use the new path trace
                     };
 
-                    // 4. Create the response packet.  Reverse the *original* path for routing.
+                    // Create the response packet with reversed routing path
                     let response_packet = Packet {
                         pack_type: PacketType::FloodResponse(flood_response),
                         routing_header: SourceRoutingHeader {
@@ -206,40 +201,24 @@ impl DronegowskiServer for CommunicationServer {
                         session_id: packet.session_id,
                     };
 
-                    // 5. Send the response back to the source.
+                    // Send the FloodResponse back to the source
                     log::info!("CommuncationServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
                     let next_node = response_packet.routing_header.hops[0];
-                    if let Some(sender) = self.packet_send.get(&next_node) {
-
-                        match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
-                            Err(_) => {
-                                log::warn!("CommunicationServer {}: Timeout sending packet to {}", self.id, next_node);
-                            }
-                            Ok(..)=>{
-                                // Notifies the simulation controller of packet sending.
-                                let _ = self
-                                    .sim_controller_send
-                                    .send(ServerEvent::PacketSent(response_packet.clone()));
-                                log::info!("CommunicationServer {}: Sent FloodResponse back to {}", self.id, next_node);
-                            }
-                        }
-                    } else {
-                        log::warn!("CommunicationServer {}: No sender found for node {}", self.id, next_node);
-                    }
+                    self.send_packet_and_notify(packet.clone(), next_node);
 
                 }
 
                 PacketType::Ack(ack) => {
-                    //log::info!("CommunicationServer {}: Received Ack {:?} from {}", self.id, ack, source_id);
+                    // Handle received ACK from a source
                     self.handle_ack(ack.clone(), packet.session_id);
                 }
                 PacketType::Nack(ref nack) => {
-                    log::info!("CommunicationServer {}: Received Nack {:?} from {}", self.id, nack, source_id);
+                    // Handle received NACK from a source
                     let drop_drone = packet.clone().routing_header.hops[0];
-                    // NACK HANDLING METHOD
                     self.handle_nack(nack.clone(), packet.session_id, drop_drone);
                 }
                 _ => {
+                    // Handle unhandled packet types
                     log::error!("CommunicationServer {}: Received unhandled packet type", self.id);
                 }
             }
@@ -249,32 +228,34 @@ impl DronegowskiServer for CommunicationServer {
     fn handle_command(&mut self, command: ServerCommand) {
         match command {
             ServerCommand::AddSender(id, sender) => {
-                //log::info!("CommunicationServer {}: Received AddSender Command: add {}", self.id, id);
+                // Add a new neighbor to the server's sender map
                 self.add_neighbor(id, sender);
             },
             ServerCommand::RemoveSender(id) => {
-                //log::info!("CommunicationServer {}: Received RemoveSender Command: remove {}", self.id, id);
+                // Remove a neighbor from the server's sender map
                 self.remove_neighbor(id);
             },
             ServerCommand::ControllerShortcut(packet) => {
-                //log::info!("CommunicationServer {}: Received ControllerShortcut Command: {:?}", self.id, packet);
+                // Handle a packet received directly from the Simulation Controller
                 self.handle_packet(packet);
             },
             _ =>{
+                // Handle unhandled command types
                 log::error!("CommunicationServer {}: Received unhandled ServerCommand type", self.id);
             }
         }
     }
 
     fn update_graph(&mut self, path_trace: Vec<(NodeId, NodeType)>) {
-        log::info!("CommunicationServer {} : updating graph knowledge using path trace {:?}",self.id, path_trace);
+        // Update the network graph with the new path trace
         for i in 0..path_trace.len() - 1 {
-            let (node_a, _) = path_trace[i];
-            let (node_b, _) = path_trace[i + 1];
-            self.topology.insert((node_a, node_b));
-            self.topology.insert((node_b, node_a)); // Grafo bidirezionale
+            let (node_a, _) = path_trace[i];  // Get the first node in the edge
+            let (node_b, _) = path_trace[i + 1];  // Get the second node in the edge
+            self.topology.insert((node_a, node_b));  // Add the edge to the topology
+            self.topology.insert((node_b, node_a));  // Ensure the graph is bidirectional
         }
 
+        // Update the node types in the graph
         for (node_id, node_type) in path_trace {
             self.node_types.insert(node_id, node_type);
         }
@@ -283,6 +264,7 @@ impl DronegowskiServer for CommunicationServer {
     fn compute_best_path(&self, target_client: NodeId) -> Option<Vec<NodeId>> {
         use std::collections::VecDeque;
 
+        // Use BFS to compute the best path to the target client
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
         let mut predecessors = HashMap::new();
@@ -292,6 +274,7 @@ impl DronegowskiServer for CommunicationServer {
 
         while let Some(current) = queue.pop_front() {
             if current == target_client {
+                // Reconstruct the path from the target to the source
                 let mut path = vec![current];
                 while let Some(&pred) = predecessors.get(&path[0]) {
                     path.insert(0, pred);
@@ -299,6 +282,7 @@ impl DronegowskiServer for CommunicationServer {
                 return Some(path);
             }
 
+            // Explore neighbors
             for &(node_a, node_b) in &self.topology {
                 if node_a == current && !visited.contains(&node_b) {
                     visited.insert(node_b);
@@ -307,74 +291,73 @@ impl DronegowskiServer for CommunicationServer {
                 }
             }
         }
-        None
+        None  // Return None if no path is found
     }
 
     fn reconstruct_message<T: DeserializeOwned>(&mut self, key: u64) -> Result<T, Box<dyn Error>> {
-        // Identifica il vettore di frammenti associato alla chiave
+        // Reassemble a message from its fragments
         if let Some(fragments) = self.message_storage.clone().get(&key) {
             if let Some(first_fragment) = fragments.first() {
                 if fragments.len() as u64 == first_fragment.total_n_fragments {
                     self.message_storage.remove(&key);
-                    // Crea una mappa indicizzata per ordinare i frammenti
+                    // Sort fragments by their index
                     let mut fragment_map: HashMap<u64, &Fragment> = HashMap::new();
                     for fragment in fragments {
                         fragment_map.insert(fragment.fragment_index, fragment);
                     }
 
-                    // Inizializza il buffer per i dati completi
+                    // Reassemble the full message data
                     let mut full_data = Vec::new();
-
-                    // Usa l'assembler per ciascun frammento in ordine
                     for index in 0..fragments.len() as u64 {
                         if let Some(fragment) = fragment_map.get(&index) {
                             assembler(&mut full_data, fragment);
                         } else {
-                            return Err(format!("Frammento mancante con indice: {}", index).into());
+                            return Err(format!("Missing fragment with index: {}", index).into());
                         }
                     }
 
-                    // Deserializza il messaggio completo
+                    // Deserialize the full message
                     let message: T = bincode::deserialize(&full_data)?;
                     Ok(message)
                 } else {
                     Err(format!(
-                        "Il numero totale di frammenti ({}) non corrisponde alla lunghezza del vettore ({})",
+                        "Total number of fragments ({}) does not match the vector length ({})",
                         first_fragment.total_n_fragments,
                         fragments.len()
                     )
                         .into())
                 }
             } else {
-                Err("Nessun frammento trovato nella lista".into())
+                Err("No fragments found in the list".into())
             }
         } else {
-            Err(format!("Nessun frammento trovato per la chiave: {}", key).into())
+            Err(format!("No fragments found for the key: {}", key).into())
         }
     }
-        fn add_neighbor(&mut self, node_id: NodeId, sender: Sender<Packet>) {
-            if let std::collections::hash_map::Entry::Vacant(e) = self.packet_send.entry(node_id) {
-                e.insert(sender);
-                //log::info!("CommunicationServer {}: Successfully added {}", self.id, node_id);
-                //log::info!("CommunicationServer {}: starting a new network discovery", self.id);
-                self.network_discovery();
 
-            } else {
-                log::error!("CommunicationServer {}: Sender for node {node_id} already stored in the map!", self.id);
-            }
+    fn add_neighbor(&mut self, node_id: NodeId, sender: Sender<Packet>) {
+        // Add a new neighbor to the server's sender map
+        if let std::collections::hash_map::Entry::Vacant(e) = self.packet_send.entry(node_id) {
+            e.insert(sender);
+            self.network_discovery();  // Trigger network discovery after adding a neighbor
+        } else {
+            log::error!("CommunicationServer {}: Sender for node {node_id} already stored in the map!", self.id);
         }
+    }
+
     fn remove_neighbor(&mut self, node_id: NodeId) {
+        // Remove a neighbor from the server's sender map
         if self.packet_send.contains_key(&node_id) {
             self.packet_send.remove(&node_id);
-            self.remove_from_topology(node_id);
-            //log::info!("CommunicationServer {}: Successfully removed neighbour {}", self.id, node_id);
-            //log::info!("CommunicationServer {}: starting a new network discovery", self.id);
-            self.network_discovery();
+            self.remove_from_topology(node_id);  // Remove the node from the topology
+            self.network_discovery();  // Trigger network discovery after removing a neighbor
         } else {
             log::error!("CommunicationServer {}: the {} is not a neighbour", self.id, node_id);
         }
     }
+
     fn remove_from_topology(&mut self, node_id: NodeId) {
+        // Remove a node from the network topology
         self.topology.retain(|&(a, b)| a != node_id && b != node_id);
         self.node_types.remove(&node_id);
     }
@@ -383,6 +366,7 @@ impl DronegowskiServer for CommunicationServer {
 impl CommunicationServer {
     pub fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType) -> Self {
 
+        // Initialize a new CommunicationServer instance
         let mut server = Self {
             id,
             sim_controller_send,
@@ -399,80 +383,90 @@ impl CommunicationServer {
             nack_counter: HashMap::new(),
             excluded_nodes: HashSet::new(),
         };
-        //log::info!("Communication server {} initialized", server.id);
 
-        server.network_discovery();
+        server.network_discovery();  // Trigger network discovery after initialization
 
         server
     }
 
     fn send_my_type(&mut self, client_id: NodeId) {
-        if let Some(best_path) = self.compute_best_path(client_id) {
-            //log::info!("Communication server {}: sending server type to {}", self.id, client_id);
-            self.send_message(ServerMessages::ServerType(self.clone().server_type), best_path);
-        }
+        // Send the server type to the client
+        self.send_message(ServerMessages::ServerType(self.clone().server_type), client_id);
     }
 
-
     fn register_client(&mut self, client_id: NodeId) {
-        if let Some(path) = self.compute_best_path(client_id) {
-            if self.registered_client.contains(&client_id) {
-                log::error!("Communication server {}: client {} already registered", self.id, client_id);
-                self.send_message(ServerMessages::RegistrationError("client already registered".to_string()), path);
-            } else {
-                //log::info!("Communication server {}: client {} registered", self.id, client_id);
-                self.registered_client.push(client_id.clone());
-                self.send_message(ServerMessages::RegistrationOk, path);
-            }
+        // Register a client to the server
+        if self.registered_client.contains(&client_id) {
+            log::error!("Communication server {}: client {} already registered", self.id, client_id);
+            self.send_message(ServerMessages::RegistrationError("client already registered".to_string()), client_id);
+        } else {
+            self.registered_client.push(client_id.clone());
+            self.send_message(ServerMessages::RegistrationOk, client_id);
         }
     }
 
     fn send_register_client(&mut self, client_id: NodeId) {
+        // Send the list of registered clients to the client
         if let Some(hops) = self.compute_best_path(client_id) {
-            //log::info!("Communication server {}: sending do client {} registered clients", self.id, client_id);
             let data = ServerMessages::ClientList(self.clone().registered_client);
-            self.send_message(data, hops)
+            self.send_message(data, client_id)
         }
     }
 
     fn forward_message(&mut self, target_id: NodeId, client_id: NodeId, message: String) {
+        // Forward a message from one client to another
         if let Some(hops) = self.compute_best_path(target_id) {
-            //log::info!("Communication server {}: sending message to addressee {}", self.id, target_id);
             let final_message = ServerMessages::MessageFrom(client_id, message);
-            self.send_message(final_message, hops);
+            self.send_message(final_message, client_id);
         }
     }
 
-    fn send_message(&mut self, message: ServerMessages, route: Vec<NodeId>) {
+    fn send_message(&mut self, message: ServerMessages, destination: NodeId) {
+        // Attempt to compute the best path to the destination.
+        // If no valid path is found, an empty vector is used as a fallback.
+        let route = self.compute_best_path(destination).unwrap_or(Vec::new());
+
+        // Check if the computed route has at least two nodes (source and next-hop).
         if let Some(&neighbour_id) = route.get(1) {
-            //log::info!("Communication server {}: sending packet to {}", self.id, neighbour_id);
+            // The next-hop neighbor ID is the second element in the computed route.
+
+            // Try to retrieve the sending channel (packet_send) associated with the neighbor.
             if let Some(sender) = self.packet_send.get(&neighbour_id) {
-                //let serialized_data = bincode::serialize(&message).expect("Serialization failed");
+                // Generate a unique session ID for this message.
                 let session_id = generate_unique_id();
+
+                // Fragment the message into smaller packets for transmission.
+                // It wraps the `ServerMessages` inside a `TestMessage::WebClientMessages` variant.
                 let packets = fragment_message(&TestMessage::WebClientMessages(message), route, session_id);
 
-
+                // Store the generated packets in the `pending_messages` map using the session ID as the key.
                 self.pending_messages.insert(session_id, packets.clone());
 
+                // Iterate over each packet and send it to the next hop.
                 for mut packet in packets {
+                    // Set the hop index to 1, meaning the packet is at the first hop in the route.
                     packet.routing_header.hop_index = 1;
-                    sender.send(packet.clone()).expect("Error during sending packet to neighbour.");
-                    // Notifies the simulation controller of packet sending.
+
+                    // Send the packet using the retrieved sender channel.
+                    sender.send(packet.clone()).expect("Error occurred sending the message to the neighbour.");
+
+                    // Notify the simulation controller (sim_controller_send) that a packet was sent.
                     let _ = self
                         .sim_controller_send
                         .send(ServerEvent::PacketSent(packet.clone()));
                 }
             } else {
-                log::error!("Communication server {}: Neighbour {} not find!", self.id, neighbour_id);
+                // If no sending channel is found for the next-hop neighbor, log an error.
+                log::error!("ContentServer {}: Neighbour {} not found!", self.id, neighbour_id);
             }
         } else {
-            log::error!("Communication server {}: empty Route, neighbour impossible to find!", self.id);
+            // If no valid route is found, log an error.
+            log::error!("ContentServer {}: There is no available route", self.id);
         }
     }
 
     fn send_ack(&mut self, packet: Packet, fragment: Fragment) {
-        //log::info!("CommunicationServer {}: Sending Ack for fragment {}", self.id, fragment.fragment_index);
-
+        // Send an ACK for a received fragment
         let reversed_hops: Vec<NodeId> = packet.routing_header.hops.iter().rev().cloned().collect();
         let ack_routing_header = SourceRoutingHeader {
             hop_index: 1,
@@ -486,58 +480,57 @@ impl CommunicationServer {
         );
 
         if let Some(next_hop) = ack_packet.routing_header.hops.get(1).cloned() {
-
-            //log::info!("CommunicationServer {}: sending ack {:?} to {}", self.id, ack_packet, next_hop);
             if let Some(sender) = self.packet_send.get(&next_hop) {
                 sender.send(ack_packet.clone()).expect("Error occurred sending the ack to the neighbour.");
-                // Notifies the simulation controller of packet sending.
+                // Notify the Simulation Controller of packet sending
                 let _ = self
                     .sim_controller_send
                     .send(ServerEvent::PacketSent(ack_packet.clone()));
             } else {
                 log::error!("CommunicationServer {}: Neighbour {} not found!", self.id, next_hop);
             }
-
         } else {
             log::warn!("CommunicationServer {}: No valid path to send Ack for fragment {}", self.id, fragment.fragment_index);
         }
-
     }
 
     fn handle_ack(&mut self, ack: Ack, session_id: u64) {
+        // Handle received ACK
         let fragment_index = ack.fragment_index;
 
-        // Removes from ack_counter if there is this packet
+        // Remove the fragment from the NACK counter
         self.nack_counter.retain(|(f_idx, s_id, _), _| !(*f_idx == fragment_index && *s_id == session_id));
 
-        // updates acked_fragments
+        // Update the set of acknowledged fragments
         let acked = self.acked_fragments.entry(session_id).or_default();
         acked.insert(fragment_index);
 
-        // Check whether all the fragments of this session have been acked
+        // Check if all fragments of the session have been acknowledged
         if let Some(fragments) = self.pending_messages.get(&session_id) {
             let total_fragments = fragments.len() as u64;
             if acked.len() as u64 == total_fragments {
+                // Remove the session from pending and acknowledged storage
                 self.pending_messages.remove(&session_id);
                 self.acked_fragments.remove(&session_id);
-                //info!("CommunicationServer {}: All fragments for session {} have been acknowledged", self.id, session_id);
             }
         }
     }
 
     fn handle_nack(&mut self, nack: Nack, session_id: u64, id_drop_drone: NodeId) {
+        // Handle received NACK
         let key = (nack.fragment_index, session_id, id_drop_drone);
 
-        // Uses Entry to correctly handle counter initialization
+        // Increment the NACK counter for the fragment
         let counter = self.nack_counter.entry(key).or_insert(0);
         *counter += 1;
 
         match nack.nack_type {
             NackType::Dropped => {
                 if *counter > 5 {
+                    // Too many NACKs, calculate an alternative path
                     info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
 
-                    // Add the problematic node to excluded nodes
+                    // Exclude the problematic node from future routing
                     self.excluded_nodes.insert(id_drop_drone);
 
                     // Reconstruct the packet with a new path
@@ -552,9 +545,9 @@ impl CommunicationServer {
                                     if let Some(next_hop) = new_packet.routing_header.hops.get(1) {
                                         info!("Client {}: Resending fragment {} via new path: {:?}",
                                         self.id, nack.fragment_index, new_packet.routing_header.hops);
-                                        self.send_packet_and_notify(new_packet.clone(), *next_hop); // Cloned here to fix borrow error
+                                        self.send_packet_and_notify(new_packet.clone(), *next_hop);  // Resend the packet
 
-                                        // Reset the counter after rerouting
+                                        // Reset the NACK counter after rerouting
                                         self.nack_counter.remove(&key);
                                         return;
                                     }
@@ -564,7 +557,7 @@ impl CommunicationServer {
                     }
                     warn!("CommunicationServer {}: Unable to find alternative path", self.id);
                 } else {
-                    // Standard resend
+                    // Standard resend of the fragment
                     if let Some(fragments) = self.pending_messages.get(&session_id) {
                         if let Some(packet) = fragments.get(nack.fragment_index as usize) {
                             info!("Communication server {}: Attempt {} for fragment {}",
@@ -575,7 +568,7 @@ impl CommunicationServer {
                 }
             }
             _ => {
-                // Handling other NACK types
+                // Handle other types of NACKs (e.g., network discovery)
                 self.network_discovery();
                 if let Some(fragments) = self.pending_messages.get(&session_id) {
                     if let Some(packet) = fragments.get(nack.fragment_index as usize) {
@@ -587,6 +580,7 @@ impl CommunicationServer {
     }
 
     fn compute_route_excluding(&self, target_server: &NodeId) -> Option<Vec<NodeId>> {
+        // Compute a route to the target server while excluding problematic nodes
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
         let mut predecessors = HashMap::new();
@@ -596,6 +590,7 @@ impl CommunicationServer {
 
         while let Some(current_node) = queue.pop_front() {
             if current_node == *target_server {
+                // Reconstruct the path from the target to the source
                 let mut path = Vec::new();
                 let mut current = *target_server;
                 while let Some(prev) = predecessors.get(&current) {
@@ -607,7 +602,7 @@ impl CommunicationServer {
                 return Some(path);
             }
 
-            // Iterate over neighbors excluding problematic nodes
+            // Explore neighbors, excluding problematic nodes
             for &(a, b) in &self.topology {
                 if a == current_node && !self.excluded_nodes.contains(&b) && !visited.contains(&b) {
                     visited.insert(b);
@@ -620,10 +615,11 @@ impl CommunicationServer {
                 }
             }
         }
-        None
+        None  // Return None if no path is found
     }
 
     fn send_packet_and_notify(&self, packet: Packet, recipient_id: NodeId) {
+        // Send a packet to a recipient and notify the Simulation Controller
         if let Some(sender) = self.packet_send.get(&recipient_id) {
             if let Err(e) = sender.send(packet.clone()) {
                 error!(
@@ -640,7 +636,7 @@ impl CommunicationServer {
                     packet.routing_header.hops.last().unwrap(),
                 );
 
-                // Notifies the SC of packet sending.
+                // Notify the Simulation Controller of packet sending
                 let _ = self
                     .sim_controller_send
                     .send(ServerEvent::PacketSent(packet));
@@ -649,5 +645,4 @@ impl CommunicationServer {
             error!("CommunicationServer {}: No sender for node {}", self.id, recipient_id);
         }
     }
-
 }
