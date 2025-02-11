@@ -579,7 +579,7 @@ impl CommunicationServer {
         }
     }
 
-    fn compute_route_excluding(&self, target_server: &NodeId) -> Option<Vec<NodeId>> {
+    fn compute_route_excluding(&self, target_client: &NodeId) -> Option<Vec<NodeId>> {
         // Compute a route to the target server while excluding problematic nodes
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
@@ -589,10 +589,10 @@ impl CommunicationServer {
         visited.insert(self.id);
 
         while let Some(current_node) = queue.pop_front() {
-            if current_node == *target_server {
+            if current_node == *target_client {
                 // Reconstruct the path from the target to the source
                 let mut path = Vec::new();
-                let mut current = *target_server;
+                let mut current = *target_client;
                 while let Some(prev) = predecessors.get(&current) {
                     path.push(current);
                     current = *prev;
@@ -615,6 +615,7 @@ impl CommunicationServer {
                 }
             }
         }
+        self.sim_controller_send.send(ServerEvent::Error(self.id, target_client.clone(), "alternative route not found".to_string()));
         None  // Return None if no path is found
     }
 
