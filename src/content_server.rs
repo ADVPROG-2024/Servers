@@ -31,7 +31,7 @@ impl TextServer {
                 if let Ok(metadata) = entry.metadata() {
                     if metadata.is_file() {
                         if let Some(extension) = entry.path().extension() {
-                            if extension == "json" { // Ora legge JSON invece di TXT
+                            if extension == "json" {
                                 if let Ok(content) = fs::read_to_string(entry.path()) {
                                     if let Ok(json) = serde_json::from_str::<Value>(&content) {
                                         let id = stored_texts.len() as u64;
@@ -60,11 +60,14 @@ impl TextServer {
         Self { stored_texts }
     }
 
+    // returns a Vec with the ids and title of the files stored in the TextServer
     pub fn list_files(&self) -> Vec<(u64, String)> {
         self.stored_texts.iter()
             .map(|(&id, file)| (id, file.title.clone()))
             .collect()
     }
+
+    //returns a file content with requested id, if there is one otherwise None
     pub fn get_file_text(&self, file_id: u64) -> Option<FileContent> {
         self.stored_texts.get(&file_id).cloned()
     }
@@ -73,7 +76,7 @@ impl TextServer {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct MediaServer {
-    pub stored_media: HashMap<u64, Vec<u8>>, // ID → Media
+    pub stored_media: HashMap<u64, Vec<u8>>,
 }
 impl MediaServer {
     pub fn new() -> MediaServer {
@@ -123,8 +126,8 @@ pub struct ContentServer {
 
     pending_messages: HashMap<u64, Vec<Packet>>,        // Storage of not acked fragments
     acked_fragments: HashMap<u64, HashSet<u64>>,        // storage of acked fragments
-    nack_counter: HashMap<(u64, u64, NodeId), u8>,
-    excluded_nodes: HashSet<NodeId>,
+    nack_counter: HashMap<(u64, u64, NodeId), u8>,      // Counter used to manage when is better to use and alternative route
+    excluded_nodes: HashSet<NodeId>,                    // ids of the drones that dropped enough fragments
 
     text: TextServer,
     media: MediaServer,
@@ -135,13 +138,13 @@ impl DronegowskiServer for ContentServer {
         loop {
             select_biased! {
                 recv(self.packet_recv) -> packet_res => {
-                    log::info!("ContentServer {}: Received packet {:?}", self.id, packet_res);
+                    //log::info!("ContentServer {}: Received packet {:?}", self.id, packet_res);
                     if let Ok(packet) = packet_res {
                         self.handle_packet(packet);
                     }
                 },
                 recv(self.sim_controller_recv) -> command_res => {
-                    log::info!("ContentServer {}: Received command {:?}", self.id, command_res);
+                    //log::info!("ContentServer {}: Received command {:?}", self.id, command_res);
                     if let Ok(command) = command_res {
                         self.handle_command(command);
                     }
@@ -158,8 +161,10 @@ impl DronegowskiServer for ContentServer {
             match packet.pack_type {
                 PacketType::MsgFragment(ref fragment) => {
 
+                    // send an ack to the sender for this fragment
                     self.send_ack(packet.clone(), fragment.clone());
 
+                    // store the fragment in order to reconstruct the message
                     self.message_storage
                         .entry(key)
                         .or_insert_with(Vec::new)
@@ -232,24 +237,24 @@ impl DronegowskiServer for ContentServer {
                     }
                 }
                 PacketType::FloodResponse(flood_response) => {
-                    log::info!(
-                    "ContentServer {}: Received FloodResponse: {:?}", self.id, flood_response);
+                    //log::info!("ContentServer {}: Received FloodResponse: {:?}", self.id, flood_response);
+
                     // update the graph knowledge based on the new FloodResponse
                     self.update_graph(flood_response.path_trace);
                 }
                 PacketType::FloodRequest(flood_request) => {
-                    log::info!("ContentServer {}: Received FloodRequest: {:?}", self.id, flood_request);
+                    //log::info!("ContentServer {}: Received FloodRequest: {:?}", self.id, flood_request);
 
                     // push myself in the path trace
                     let mut response_path_trace = flood_request.path_trace.clone();
                     response_path_trace.push((self.id, NodeType::Server));
 
+
+                    // build the flood response packet
                     let flood_response = FloodResponse {
                         flood_id: flood_request.flood_id,
                         path_trace: response_path_trace,
                     };
-
-                    // build the flood response packet
                     let response_packet = Packet {
                         pack_type: PacketType::FloodResponse(flood_response),
                         routing_header: SourceRoutingHeader {
@@ -259,54 +264,57 @@ impl DronegowskiServer for ContentServer {
                         session_id: packet.session_id,
                     };
 
-                    log::info!("ContentServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
+                    //log::info!("ContentServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
+                    // send the flood response
                     let next_node = response_packet.routing_header.hops[0];
-                    if let Some(sender) = self.packet_send.get(&next_node) {
-                        match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
-                            Err(_) => {
-                                log::warn!("ContentServer {}: Timeout sending packet to {}", self.id, next_node);
-                            }
-                            Ok(..)=>{
-                                log::info!("ContentServer {}: Sent FloodResponse back to {}", self.id, next_node);
-                                // notify the SC that I sent a flood_response
-                                let _ = self
-                                    .sim_controller_send
-                                    .send(ServerEvent::PacketSent(response_packet.clone()));
-                            }
-                        }
-                    } else {
-                        log::warn!("ContentServer {}: No sender found for node {}", self.id, next_node);
-                    }
+
+                    self.send_packet_and_notify(response_packet.clone(), next_node);
+                    // if let Some(sender) = self.packet_send.get(&next_node) {
+                    //     match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
+                    //         Err(_) => {
+                    //             log::warn!("ContentServer {}: Timeout sending packet to {}", self.id, next_node);
+                    //         }
+                    //         Ok(..)=>{
+                    //             //log::info!("ContentServer {}: Sent FloodResponse back to {}", self.id, next_node);
+                    //             // notify the SC that I sent a flood_response
+                    //             let _ = self
+                    //                 .sim_controller_send
+                    //                 .send(ServerEvent::PacketSent(response_packet.clone()));
+                    //         }
+                    //     }
+                    // } else {
+                    //     log::error!("ContentServer {}: No sender found for node {}", self.id, next_node);
+                    // }
                 }
                 PacketType::Ack(ack) => {
                     //log::info!("ContentServer {}: Received Ack {:?} from {}", self.id, ack, source_id);
                     self.handle_ack(ack.clone(), packet.session_id);
                 }
                 PacketType::Nack(ref nack) => {
-                    log::info!("ContentServer {}: Received Nack {:?} from {}", self.id, nack, source_id);
+                    //log::info!("ContentServer {}: Received Nack {:?} from {}", self.id, nack, source_id);
+
+                    // call the nack handler method passing it the drone which dropped
                     let drop_drone = packet.clone().routing_header.hops[0];
-                    // NACK HANDLING METHOD
                     self.handle_nack(nack.clone(), packet.session_id, drop_drone);
                 }
             }
         }
     }
     fn reconstruct_message<T: DeserializeOwned>(&mut self, key: u64) -> Result<T, Box<dyn std::error::Error>> {
-        // Identifica il vettore di frammenti associato alla chiave
+        // identify the Vec of fragments associated with this specific key
         if let Some(fragments) = self.message_storage.clone().get(&key) {
             if let Some(first_fragment) = fragments.first() {
                 if fragments.len() as u64 == first_fragment.total_n_fragments {
                     self.message_storage.remove(&key);
-                    // Crea una mappa indicizzata per ordinare i frammenti
+                    // sort the fragments using a map
                     let mut fragment_map: HashMap<u64, &Fragment> = HashMap::new();
                     for fragment in fragments {
                         fragment_map.insert(fragment.fragment_index, fragment);
                     }
 
-                    // Inizializza il buffer per i dati completi
                     let mut full_data = Vec::new();
 
-                    // Usa l'assembler per ciascun frammento in ordine
+                    // assemble the message
                     for index in 0..fragments.len() as u64 {
                         if let Some(fragment) = fragment_map.get(&index) {
                             assembler(&mut full_data, fragment);
@@ -315,22 +323,22 @@ impl DronegowskiServer for ContentServer {
                         }
                     }
 
-                    // Deserializza il messaggio completo
+                    // Deserialize the complete message
                     let message: T = bincode::deserialize(&full_data)?;
                     Ok(message)
                 } else {
                     Err(format!(
-                        "Il numero totale di frammenti ({}) non corrisponde alla lunghezza del vettore ({})",
+                        "Total number of fragments ({}) does not correspond with the Vec length ({})",
                         first_fragment.total_n_fragments,
                         fragments.len()
                     )
                         .into())
                 }
             } else {
-                Err("Nessun frammento trovato nella lista".into())
+                Err("No fragment found".into())
             }
         } else {
-            Err(format!("Nessun frammento trovato per la chiave: {}", key).into())
+            Err(format!("No fragment found using key: {}", key).into())
         }
     }
 
@@ -391,8 +399,8 @@ impl DronegowskiServer for ContentServer {
     fn add_neighbor(&mut self, node_id: NodeId, sender: Sender<Packet>) {
         if let std::collections::hash_map::Entry::Vacant(e) = self.packet_send.entry(node_id) {
             e.insert(sender);
-            log::info!("ContentServer {}: Successfully added {}", self.id, node_id);
-            log::info!("ContentServer {}: starting a new network discovery", self.id);
+            //log::info!("ContentServer {}: Successfully added {}", self.id, node_id);
+            //log::info!("ContentServer {}: starting a new network discovery", self.id);
             self.network_discovery();
 
         } else {
@@ -403,8 +411,8 @@ impl DronegowskiServer for ContentServer {
         if self.packet_send.contains_key(&node_id) {
             self.packet_send.remove(&node_id);
             self.remove_from_topology(node_id);
-            log::info!("ContentServer {}: Successfully removed neighbour {}", self.id, node_id);
-            log::info!("ContentServer {}: starting a new network discovery", self.id);
+            //log::info!("ContentServer {}: Successfully removed neighbour {}", self.id, node_id);
+            //log::info!("ContentServer {}: starting a new network discovery", self.id);
             self.network_discovery();
         } else {
             log::error!("ContentServer {}: the {} is not a neighbour", self.id, node_id);
@@ -418,7 +426,7 @@ impl DronegowskiServer for ContentServer {
 
     // network discovery related methods
     fn network_discovery(&self) {
-        log::info!("ContentServer {}: starting Network discovery", self.id);
+        //log::info!("ContentServer {}: starting Network discovery", self.id);
         let mut path_trace = Vec::new();
         path_trace.push((self.id, NodeType::Server));
 
@@ -430,7 +438,7 @@ impl DronegowskiServer for ContentServer {
         };
 
         for (node_id, sender) in &self.packet_send {
-            log::info!("ContentServer {}: sending flood request to {}", self.id, node_id);
+            //log::info!("ContentServer {}: sending flood request to {}", self.id, node_id);
 
             // build the flood_request packets
             let flood_request_packet = Packet {
@@ -457,13 +465,13 @@ impl DronegowskiServer for ContentServer {
             let (node_a, _) = path_trace[i];
             let (node_b, _) = path_trace[i + 1];
             self.topology.insert((node_a, node_b));
-            self.topology.insert((node_b, node_a)); // Grafo bidirezionale
+            self.topology.insert((node_b, node_a));
         }
 
         for (node_id, node_type) in path_trace {
             self.node_types.insert(node_id, node_type);
         }
-        log::info!("ContentServer {}: topology after update: {:?}", self.id, self.topology);
+        //log::info!("ContentServer {}: topology after update: {:?}", self.id, self.topology);
     }
 
 }
@@ -526,7 +534,7 @@ impl ContentServer {
         }
     }
     fn send_ack(&mut self, packet: Packet, fragment: Fragment) {
-        log::info!("ContentServer {}: Sending Ack for fragment {}", self.id, fragment.fragment_index);
+        //log::info!("ContentServer {}: Sending Ack for fragment {}", self.id, fragment.fragment_index);
 
         let reversed_hops: Vec<NodeId> = packet.routing_header.hops.iter().rev().cloned().collect();
         let ack_routing_header = SourceRoutingHeader {
@@ -542,7 +550,7 @@ impl ContentServer {
 
         if let Some(next_hop) = ack_packet.routing_header.hops.get(1).cloned() {
 
-            log::info!("ContentServer {}: sending ack {:?} to {}", self.id, ack_packet, next_hop);
+            //log::info!("ContentServer {}: sending ack {:?} to {}", self.id, ack_packet, next_hop);
             if let Some(sender) = self.packet_send.get(&next_hop) {
                 sender.send(ack_packet.clone()).expect("Error occurred sending the ack to the neighbour.");
                 let _ = self
@@ -618,7 +626,7 @@ impl ContentServer {
         match nack.nack_type {
             NackType::Dropped => {
                 if *counter > 5 {
-                    info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
+                    //info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
 
                     // Add the problematic node to excluded nodes
                     self.excluded_nodes.insert(id_drop_drone);
@@ -633,9 +641,9 @@ impl ContentServer {
                                     new_packet.routing_header.hop_index = 1;
 
                                     if let Some(next_hop) = new_packet.routing_header.hops.get(1) {
-                                        info!("Client {}: Resending fragment {} via new path: {:?}",
-                                        self.id, nack.fragment_index, new_packet.routing_header.hops);
-                                        self.send_packet_and_notify(new_packet.clone(), *next_hop); // Cloned here to fix borrow error
+                                        //info!("Client {}: Resending fragment {} via new path: {:?}",self.id, nack.fragment_index, new_packet.routing_header.hops);
+
+                                        self.send_packet_and_notify(new_packet.clone(), *next_hop);
 
                                         // Reset the counter after rerouting
                                         self.nack_counter.remove(&key);
@@ -650,8 +658,7 @@ impl ContentServer {
                     // Standard resend
                     if let Some(fragments) = self.pending_messages.get(&session_id) {
                         if let Some(packet) = fragments.get(nack.fragment_index as usize) {
-                            info!("Client {}: Attempt {} for fragment {}",
-                            self.id, counter, nack.fragment_index);
+                            //info!("Client {}: Attempt {} for fragment {}", self.id, counter, nack.fragment_index);
                             self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
                         }
                     }
