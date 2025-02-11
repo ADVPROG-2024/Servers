@@ -250,7 +250,7 @@ impl DronegowskiServer for ContentServer {
                     response_path_trace.push((self.id, NodeType::Server));
 
 
-                    // build the flood response packet
+                    // build the flood response packet.
                     let flood_response = FloodResponse {
                         flood_id: flood_request.flood_id,
                         path_trace: response_path_trace.clone(),
