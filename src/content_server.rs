@@ -515,7 +515,11 @@ impl ContentServer {
             //log::info!("ContentServer {}: sending packet to {}", self.id, neighbour_id);
             if let Some(sender) = self.packet_send.get(&neighbour_id) {
 
-                let packets = fragment_message(&TestMessage::WebClientMessages(message), route, 1);
+                let session_id = generate_unique_id();
+
+                let packets = fragment_message(&TestMessage::WebClientMessages(message), route, session_id);
+
+                self.pending_messages.insert(session_id, packets.clone());
 
                 for mut packet in packets {
                     packet.routing_header.hop_index = 1;
@@ -653,12 +657,14 @@ impl ContentServer {
                             }
                         }
                     }
-                    warn!("Client {}: Unable to find alternative path", self.id);
+                    warn!("ContentServer {}: Unable to find alternative path", self.id);
                 } else {
                     // Standard resend
                     if let Some(fragments) = self.pending_messages.get(&session_id) {
                         if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+
                             //info!("Client {}: Attempt {} for fragment {}", self.id, counter, nack.fragment_index);
+
                             self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
                         }
                     }
