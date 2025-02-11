@@ -92,9 +92,13 @@ impl MediaServer {
             for entry in entries.flatten() {
                 if let Ok(metadata) = entry.metadata() {
                     if metadata.is_file() {
-                        let id = stored_media.len() as u64;
-                        if let Ok(content) = fs::read(entry.path()) {
-                            stored_media.insert(id, content);
+                        if let Some(file_name) = entry.file_name().to_str() {
+                            if let Some(first_digit) = file_name.chars().next().and_then(|c| c.to_digit(10)) {
+                                let id = first_digit as u64;
+                                if let Ok(content) = fs::read(entry.path()) {
+                                    stored_media.insert(id, content);
+                                }
+                            }
                         }
                     }
                 }
