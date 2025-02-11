@@ -681,7 +681,7 @@ impl ContentServer {
             }
         }
     }
-    fn compute_route_excluding(&self, target_server: &NodeId) -> Option<Vec<NodeId>> {
+    fn compute_route_excluding(&self, target_client: &NodeId) -> Option<Vec<NodeId>> {
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
         let mut predecessors = HashMap::new();
@@ -690,9 +690,9 @@ impl ContentServer {
         visited.insert(self.id);
 
         while let Some(current_node) = queue.pop_front() {
-            if current_node == *target_server {
+            if current_node == *target_client {
                 let mut path = Vec::new();
-                let mut current = *target_server;
+                let mut current = *target_client;
                 while let Some(prev) = predecessors.get(&current) {
                     path.push(current);
                     current = *prev;
@@ -715,6 +715,7 @@ impl ContentServer {
                 }
             }
         }
+        self.sim_controller_send.send(ServerEvent::Error(self.id, target_client.clone(), "alternative route not found".to_string()));
         None
     }
 
