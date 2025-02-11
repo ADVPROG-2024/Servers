@@ -186,7 +186,7 @@ impl DronegowskiServer for ContentServer {
                                             // handles the message in relation of its type
                                             match client_messages {
                                                 ClientMessages::ServerType =>{
-                                                    //log::info!("ContentServer {}: Received server type request from {}", self.id, source_id);
+                                                    log::info!("ContentServer {}: Received server type request from {}", self.id, source_id);
                                                     self.send_message(ServerMessages::ServerType(ServerType::Content), source_id);
                                                 },
                                                 ClientMessages::FilesList =>{
