@@ -407,18 +407,14 @@ impl CommunicationServer {
 
     fn send_register_client(&mut self, client_id: NodeId) {
         // Send the list of registered clients to the client
-        if let Some(hops) = self.compute_best_path(client_id) {
-            let data = ServerMessages::ClientList(self.clone().registered_client);
-            self.send_message(data, client_id)
-        }
+        let data = ServerMessages::ClientList(self.clone().registered_client);
+        self.send_message(data, client_id)
     }
 
     fn forward_message(&mut self, target_id: NodeId, client_id: NodeId, message: String) {
         // Forward a message from one client to another
-        if let Some(hops) = self.compute_best_path(target_id) {
-            let final_message = ServerMessages::MessageFrom(client_id, message);
-            self.send_message(final_message, target_id);
-        }
+        let final_message = ServerMessages::MessageFrom(client_id, message);
+        self.send_message(final_message, target_id);
     }
 
     fn send_message(&mut self, message: ServerMessages, destination: NodeId) {
