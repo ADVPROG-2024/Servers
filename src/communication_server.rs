@@ -422,6 +422,11 @@ impl CommunicationServer {
         // If no valid path is found, an empty vector is used as a fallback.
         let route = self.compute_best_path(destination).unwrap_or(Vec::new());
 
+        // sending route to SC
+        let _ = self
+            .sim_controller_send
+            .send(ServerEvent::Route(route.clone()));
+
         // Check if the computed route has at least two nodes (source and next-hop).
         if let Some(&neighbour_id) = route.get(1) {
             // The next-hop neighbor ID is the second element in the computed route.
@@ -534,6 +539,12 @@ impl CommunicationServer {
                         if let Some(packet) = fragments.get(nack.fragment_index as usize) {
                             if let Some(target_server) = packet.routing_header.hops.last() {
                                 if let Some(new_path) = self.compute_route_excluding(target_server) {
+
+                                    // sending route to SC
+                                    let _ = self
+                                        .sim_controller_send
+                                        .send(ServerEvent::Route(new_path.clone()));
+
                                     let mut new_packet = packet.clone();
                                     new_packet.routing_header.hops = new_path;
                                     new_packet.routing_header.hop_index = 1;
