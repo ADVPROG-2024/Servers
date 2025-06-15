@@ -588,44 +588,42 @@ impl CommunicationServer {
     }
 
     fn compute_route_excluding(&self, target_client: &NodeId) -> Option<Vec<NodeId>> {
-        // Compute a route to the target server while excluding problematic nodes
-        let mut visited = HashSet::new();
-        let mut queue = VecDeque::new();
-        let mut predecessors = HashMap::new();
+        let mut visited = HashSet::new(); // Set to keep track of visited nodes during BFS.
+        let mut queue = VecDeque::new(); // Queue for BFS traversal.
+        let mut predecessors = HashMap::new(); // Map to store predecessors for path reconstruction.
 
-        queue.push_back(self.id);
-        visited.insert(self.id);
+        queue.push_back(self.id); // Start BFS from the client's own ID.
+        visited.insert(self.id); // Mark client node as visited.
 
-        while let Some(current_node) = queue.pop_front() {
-            if current_node == *target_client {
-                // Reconstruct the path from the target to the source
+        while let Some(current_node) = queue.pop_front() { // While there are nodes in the queue.
+            if current_node == *target_client { // If the current node is the target server.
                 let mut path = Vec::new();
                 let mut current = *target_client;
-                while let Some(prev) = predecessors.get(&current) {
+                while let Some(prev) = predecessors.get(&current) { // Reconstruct path by backtracking from the target server using predecessors.
                     path.push(current);
                     current = *prev;
                 }
-                path.push(self.id);
-                path.reverse();
-                return Some(path);
+                path.push(self.id); // Add the client's ID to the path.
+                path.reverse(); // Reverse the path to get the correct order from client to server.
+                return Some(path); // Return the computed path.
             }
 
-            // Explore neighbors, excluding problematic nodes
-            for &(a, b) in &self.topology {
-                if a == current_node && !self.excluded_nodes.contains(&b) && !visited.contains(&b) {
-                    visited.insert(b);
-                    queue.push_back(b);
-                    predecessors.insert(b, a);
-                } else if b == current_node && !self.excluded_nodes.contains(&a) && !visited.contains(&a) {
-                    visited.insert(a);
-                    queue.push_back(a);
-                    predecessors.insert(a, b);
+            // Iterate over neighbors excluding problematic nodes
+            for &(a, b) in &self.topology { // Iterate through the network topology (edges).
+                if a == current_node && !self.excluded_nodes.contains(&b) && !visited.contains(&b) { // If 'b' is a neighbor of 'a', 'b' is not excluded, and 'b' is not visited.
+                    visited.insert(b); // Mark 'b' as visited.
+                    queue.push_back(b); // Add 'b' to the queue for further exploration.
+                    predecessors.insert(b, a); // Set 'a' as the predecessor of 'b'.
+                } else if b == current_node && !self.excluded_nodes.contains(&a) && !visited.contains(&a) { // If 'a' is a neighbor of 'b', 'a' is not excluded and 'a' is not visited.
+                    visited.insert(a); // Mark 'a' as visited.
+                    queue.push_back(a); // Add 'a' to the queue.
+                    predecessors.insert(a, b); // Set 'b' as the predecessor of 'a'.
                 }
             }
         }
-        self.sim_controller_send.send(ServerEvent::Error(self.id, target_client.clone(), "alternative route not found by server".to_string()));
-        warn!("CommunicationServer {}: Unable to find alternative path by server", self.id);
-        None  // Return None if no path is found
+
+        let _ = self.sim_controller_send.send(ServerEvent::Error(self.id, target_client.clone(), "not alternative path route available".to_string()));
+        None // Return None if no path is found.
     }
 
     fn send_packet_and_notify(&self, packet: Packet, recipient_id: NodeId) {
