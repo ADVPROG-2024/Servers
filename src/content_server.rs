@@ -656,8 +656,6 @@ impl ContentServer {
                         .sim_controller_send
                         .send(ServerEvent::DebugMessage(self.id, format!("Server {}: new route exclude {:?}", self.id, self.excluded_nodes)));
 
-                    self.network_discovery();
-
                     // Reconstruct the packet with a new path
                     if let Some(fragments) = self.pending_messages.get(&session_id) {
                         if let Some(packet) = fragments.get(nack.fragment_index as usize) {
