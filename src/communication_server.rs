@@ -542,7 +542,13 @@ impl CommunicationServer {
 
                     // Reconstruct the packet with a new path
                     if let Some(fragments) = self.pending_messages.get(&session_id) {
+                        let _ = self
+                            .sim_controller_send
+                            .send(ServerEvent::DebugMessage(self.id, format!("cANE DIOOO")));
                         if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+                            let _ = self
+                                .sim_controller_send
+                                .send(ServerEvent::DebugMessage(self.id, format!("PORCO DIOOO")));
                             if let Some(target_server) = packet.routing_header.hops.last() {
                                 let _ = self
                                     .sim_controller_send
