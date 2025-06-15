@@ -533,7 +533,7 @@ impl CommunicationServer {
                 let _ = self
                     .sim_controller_send
                     .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
-                if *counter > 3 {
+                if *counter == 4 {
                     // Too many NACKs, calculate an alternative path
                     info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
 
@@ -542,18 +542,8 @@ impl CommunicationServer {
 
                     // Reconstruct the packet with a new path
                     if let Some(fragments) = self.pending_messages.get(&session_id) {
-                        let _ = self
-                            .sim_controller_send
-                            .send(ServerEvent::DebugMessage(self.id, format!("cANE DIOOO")));
                         if let Some(packet) = fragments.get(nack.fragment_index as usize) {
-                            let _ = self
-                                .sim_controller_send
-                                .send(ServerEvent::DebugMessage(self.id, format!("PORCO DIOOO")));
                             if let Some(target_server) = packet.routing_header.hops.last() {
-                                let _ = self
-                                    .sim_controller_send
-                                    .send(ServerEvent::DebugMessage(self.id, format!("Target Server {}", target_server)));
-
                                 if let Some(new_path) = self.compute_route_excluding(target_server) {
 
                                     // sending route to SC
@@ -579,7 +569,7 @@ impl CommunicationServer {
                         }
                     }
                     warn!("CommunicationServer {}: Unable to find alternative path", self.id);
-                } else {
+                } else if *counter<4 {
                     // Standard resend of the fragment
                     if let Some(fragments) = self.pending_messages.get(&session_id) {
                         if let Some(packet) = fragments.get(nack.fragment_index as usize) {

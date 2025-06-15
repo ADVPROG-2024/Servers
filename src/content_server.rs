@@ -646,7 +646,7 @@ impl ContentServer {
                 let _ = self
                     .sim_controller_send
                     .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
-                if *counter > 3 {
+                if *counter == 4 {
                     //info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
 
                     // Add the problematic node to excluded nodes
@@ -673,7 +673,7 @@ impl ContentServer {
                                         self.send_packet_and_notify(new_packet.clone(), *next_hop);
 
                                         // Reset the counter after rerouting
-                                        self.nack_counter.remove(&key);
+                                        // self.nack_counter.remove(&key);
                                         return;
                                     }
                                 }
@@ -681,7 +681,7 @@ impl ContentServer {
                         }
                     }
                     warn!("ContentServer {}: Unable to find alternative path", self.id);
-                } else {
+                } else if *counter<4 {
                     // Standard resend
                     if let Some(fragments) = self.pending_messages.get(&session_id) {
                         if let Some(packet) = fragments.get(nack.fragment_index as usize) {
