@@ -99,6 +99,9 @@ impl DronegowskiServer for CommunicationServer {
             match packet.pack_type {
                 PacketType::MsgFragment(ref fragment) => {
                     // Handle received message fragment from a client
+                    let _ = self
+                        .sim_controller_send
+                        .send(ServerEvent::DebugMessage(self.id, format!("Client {}: received from {}", self.id, client_id)));
 
                     // Send an ACK for the received fragment
                     self.send_ack(packet.clone(), fragment.clone());
@@ -527,7 +530,10 @@ impl CommunicationServer {
 
         match nack.nack_type {
             NackType::Dropped => {
-                if *counter > 10 {
+                let _ = self
+                    .sim_controller_send
+                    .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
+                if *counter > 3 {
                     // Too many NACKs, calculate an alternative path
                     info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
 

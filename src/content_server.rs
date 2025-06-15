@@ -165,6 +165,10 @@ impl DronegowskiServer for ContentServer {
             match packet.pack_type {
                 PacketType::MsgFragment(ref fragment) => {
 
+                    let _ = self
+                        .sim_controller_send
+                        .send(ServerEvent::DebugMessage(self.id, format!("Client {}: received from {}", self.id, source_id)));
+
                     // send an ack to the sender for this fragment
                     self.send_ack(packet.clone(), fragment.clone());
 
@@ -639,7 +643,10 @@ impl ContentServer {
 
         match nack.nack_type {
             NackType::Dropped => {
-                if *counter > 10 {
+                let _ = self
+                    .sim_controller_send
+                    .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
+                if *counter > 3 {
                     //info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
 
                     // Add the problematic node to excluded nodes
