@@ -732,6 +732,7 @@ impl ContentServer {
             }
         }
         self.sim_controller_send.send(ServerEvent::Error(self.id, target_client.clone(), "alternative route not found by server".to_string()));
+        warn!("ContentServer {}: Unable to find alternative path by server", self.id);
         None
     }
 

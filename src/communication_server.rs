@@ -624,6 +624,7 @@ impl CommunicationServer {
             }
         }
         self.sim_controller_send.send(ServerEvent::Error(self.id, target_client.clone(), "alternative route not found by server".to_string()));
+        warn!("CommunicationServer {}: Unable to find alternative path by server", self.id);
         None  // Return None if no path is found
     }
 
