@@ -239,7 +239,7 @@ impl DronegowskiServer for CommunicationServer {
                 // Handle a packet received directly from the Simulation Controller
                 self.handle_packet(packet);
             },
-            ServerCommand::RequestNetworkDiscovery() => self.network_discovery(),
+            ServerCommand::RequestNetworkDiscovery() => {self.network_discovery()},
             _ =>{
                 // Handle unhandled command types
                 log::error!("CommunicationServer {}: Received unhandled ServerCommand type", self.id);
