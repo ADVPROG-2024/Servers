@@ -183,7 +183,7 @@ impl DronegowskiServer for ContentServer {
                                         if let TestMessage::WebServerMessages(client_messages) = message {
 
                                             // Sends the received message to the simulation controller.
-                                            let _ = self
+                                            let _send_sc = self
                                                 .sim_controller_send
                                                 .send(ServerEvent::MessageReceived(TestMessage::WebServerMessages(client_messages.clone())));
 
@@ -268,7 +268,7 @@ impl DronegowskiServer for ContentServer {
                         session_id: packet.session_id,
                     };
 
-                    log::info!("ContentServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
+                    info!("ContentServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
                     // send the flood response
                     let next_node = response_packet.routing_header.hops[1];
 
@@ -456,10 +456,10 @@ impl DronegowskiServer for ContentServer {
             };
 
             // send the flood_request
-            let _ = sender.send(flood_request_packet.clone());
+            let _send_neighbor = sender.send(flood_request_packet.clone());
 
             // notify the SC that I sent a flood_request
-            let _ = self
+            let _send_sc = self
                 .sim_controller_send
                 .send(ServerEvent::PacketSent(flood_request_packet.clone()));
         }
@@ -467,8 +467,8 @@ impl DronegowskiServer for ContentServer {
     fn update_graph(&mut self, path_trace: Vec<(NodeId, NodeType)>) {
         log::info!("ContentServer {}: updating graph knowledge using: {:?}", self.id, path_trace);
         for i in 0..path_trace.len() - 1 {
-            let (node_a, _) = path_trace[i];
-            let (node_b, _) = path_trace[i + 1];
+            let (node_a, _node_type) = path_trace[i];
+            let (node_b, _node_type) = path_trace[i + 1];
             self.topology.insert((node_a, node_b));
             self.topology.insert((node_b, node_a));
         }
@@ -536,7 +536,7 @@ impl ContentServer {
                     sender.send(packet.clone()).expect("Error occurred sending the message to the neighbour.");
 
                     // notify the SC that I sent a message
-                    let _ = self
+                    let _send_sc = self
                         .sim_controller_send
                         .send(ServerEvent::PacketSent(packet.clone()));
                 }
@@ -567,7 +567,7 @@ impl ContentServer {
             //log::info!("ContentServer {}: sending ack {:?} to {}", self.id, ack_packet, next_hop);
             if let Some(sender) = self.packet_send.get(&next_hop) {
                 sender.send(ack_packet.clone()).expect("Error occurred sending the ack to the neighbour.");
-                let _ = self
+                let _send_sc = self
                     .sim_controller_send
                     .send(ServerEvent::PacketSent(ack_packet.clone()));
             } else {
@@ -597,7 +597,7 @@ impl ContentServer {
                 // );
 
                 // Notifies the SC of packet sending.
-                let _ = self
+                let _send_sc = self
                     .sim_controller_send
                     .send(ServerEvent::PacketSent(packet));
             }

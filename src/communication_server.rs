@@ -83,10 +83,10 @@ impl DronegowskiServer for CommunicationServer {
             };
 
             // Send the FloodRequest packet to the neighbor
-            let _ = sender.send(flood_request_packet.clone());
+            let _send_neighbor = sender.send(flood_request_packet.clone());
 
             // Notify the Simulation Controller that a FloodRequest was sent
-            let _ = self
+            let _send_sc = self
                 .sim_controller_send
                 .send(ServerEvent::PacketSent(flood_request_packet.clone()));
         }
@@ -121,7 +121,7 @@ impl DronegowskiServer for CommunicationServer {
                                         if let TestMessage::WebServerMessages(client_message) = message {
 
                                             // Send the received message to the Simulation Controller
-                                            let _ = self
+                                            let _send_sc = self
                                                 .sim_controller_send
                                                 .send(ServerEvent::MessageReceived(TestMessage::WebServerMessages(client_message.clone())));
 
@@ -202,7 +202,7 @@ impl DronegowskiServer for CommunicationServer {
                     };
 
                     // Send the FloodResponse back to the source
-                    log::info!("CommuncationServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
+                    info!("CommuncationServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
                     let next_node = response_packet.routing_header.hops[1];
                     self.send_packet_and_notify(packet.clone(), next_node);
 
@@ -250,8 +250,8 @@ impl DronegowskiServer for CommunicationServer {
     fn update_graph(&mut self, path_trace: Vec<(NodeId, NodeType)>) {
         // Update the network graph with the new path trace
         for i in 0..path_trace.len() - 1 {
-            let (node_a, _) = path_trace[i];  // Get the first node in the edge
-            let (node_b, _) = path_trace[i + 1];  // Get the second node in the edge
+            let (node_a, _node_type) = path_trace[i];  // Get the first node in the edge
+            let (node_b, _node_type) = path_trace[i + 1];  // Get the second node in the edge
             self.topology.insert((node_a, node_b));  // Add the edge to the topology
             self.topology.insert((node_b, node_a));  // Ensure the graph is bidirectional
         }
@@ -424,7 +424,7 @@ impl CommunicationServer {
         let route = self.compute_best_path(destination).unwrap_or(Vec::new());
 
         // sending route to SC
-        let _ = self
+        let _send_sc = self
             .sim_controller_send
             .send(ServerEvent::Route(route.clone()));
 
@@ -542,7 +542,7 @@ impl CommunicationServer {
                                 if let Some(new_path) = self.compute_route_excluding(target_server) {
 
                                     // sending route to SC
-                                    let _ = self
+                                    let _send_sc = self
                                         .sim_controller_send
                                         .send(ServerEvent::Route(new_path.clone()));
 
@@ -622,7 +622,7 @@ impl CommunicationServer {
             }
         }
 
-        let _ = self.sim_controller_send.send(ServerEvent::Error(self.id, target_client.clone(), "not alternative path route available by server".to_string()));
+        let _send_sc = self.sim_controller_send.send(ServerEvent::Error(self.id, target_client.clone(), "not alternative path route available by server".to_string()));
         None // Return None if no path is found.
     }
 
