@@ -732,7 +732,7 @@ impl ContentServer {
             }
         }
 
-        let _ = self.sim_controller_send.send(ServerEvent::Error(self.id, target_client.clone(), "not alternative path route available".to_string()));
+        let _ = self.sim_controller_send.send(ServerEvent::Error(self.id, target_client.clone(), "not alternative path route available by server".to_string()));
         None // Return None if no path is found.
     }
 }
