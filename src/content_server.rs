@@ -400,7 +400,7 @@ impl DronegowskiServer for ContentServer {
                 for server_command in self.sc_server_channels.clone(){
                     server_command.1.send(ServerCommand::RequestNetworkDiscovery).expect("Error sending Request Network Discovery");
                 }
-            ServerCommand::RequestNetworkDiscovery() => {self.network_discovery()},
+            ServerCommand::RequestNetworkDiscovery => {self.network_discovery()},
             _ =>{
                 log::error!("ContentServer {}: Received unhandled ServerCommand type", self.id);
             }
