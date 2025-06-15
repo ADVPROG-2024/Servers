@@ -643,11 +643,11 @@ impl ContentServer {
 
         match nack.nack_type {
             NackType::Dropped => {
-                let _ = self
-                    .sim_controller_send
-                    .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
                 if *counter == 4 {
                     //info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
+                    let _ = self
+                        .sim_controller_send
+                        .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
 
                     // Add the problematic node to excluded nodes
                     self.excluded_nodes.insert(id_drop_drone);
