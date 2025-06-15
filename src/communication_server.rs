@@ -544,6 +544,10 @@ impl CommunicationServer {
                     if let Some(fragments) = self.pending_messages.get(&session_id) {
                         if let Some(packet) = fragments.get(nack.fragment_index as usize) {
                             if let Some(target_server) = packet.routing_header.hops.last() {
+                                let _ = self
+                                    .sim_controller_send
+                                    .send(ServerEvent::DebugMessage(self.id, format!("Target Server {}", target_server)));
+
                                 if let Some(new_path) = self.compute_route_excluding(target_server) {
 
                                     // sending route to SC
@@ -561,7 +565,7 @@ impl CommunicationServer {
                                         self.send_packet_and_notify(new_packet.clone(), *next_hop);  // Resend the packet
 
                                         // Reset the NACK counter after rerouting
-                                        self.nack_counter.remove(&key);
+                                        // self.nack_counter.remove(&key);
                                         return;
                                     }
                                 }
