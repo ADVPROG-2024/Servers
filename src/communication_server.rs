@@ -94,8 +94,7 @@ impl DronegowskiServer for CommunicationServer {
 
     fn handle_packet(&mut self, packet: Packet) {
         // Handle received packet
-        if let Some(source_id) = packet.routing_header.source() {  // Get the source of the packet
-            let client_id = packet.routing_header.source().unwrap();  // Identify the client ID
+        if let Some(client_id) = packet.routing_header.source() {  // Get the source of the packet
             let key = packet.session_id;  // Identify the session ID
             match packet.pack_type {
                 PacketType::MsgFragment(ref fragment) => {
