@@ -32,7 +32,7 @@ pub struct CommunicationServer {
     // Fields for handling acknowledgments (ACKs) and negative acknowledgments (NACKs)
     pending_messages: HashMap<u64, Vec<Packet>>,        // Storage for not yet acknowledged fragments
     acked_fragments: HashMap<u64, HashSet<u64>>,        // Storage for acknowledged fragments
-    nack_counter: HashMap<(u64, u64, NodeId), u8>,      // Counter for NACKs per fragment, session, and node
+    nack_counter: HashMap<(u64, u64, NodeId), u64>,      // Counter for NACKs per fragment, session, and node
     excluded_nodes: HashSet<NodeId>,                    // Nodes excluded from routing due to failures
 }
 

@@ -130,7 +130,7 @@ pub struct ContentServer {
 
     pending_messages: HashMap<u64, Vec<Packet>>,        // Storage of not acked fragments
     acked_fragments: HashMap<u64, HashSet<u64>>,        // storage of acked fragments
-    nack_counter: HashMap<(u64, u64, NodeId), u8>,      // Counter used to manage when is better to use and alternative route
+    nack_counter: HashMap<(u64, u64, NodeId), u64>,      // Counter used to manage when is better to use and alternative route
     excluded_nodes: HashSet<NodeId>,                    // ids of the drones that dropped enough fragments
 
     text: TextServer,
