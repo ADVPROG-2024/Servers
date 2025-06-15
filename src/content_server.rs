@@ -652,6 +652,10 @@ impl ContentServer {
                     // Add the problematic node to excluded nodes
                     self.excluded_nodes.insert(id_drop_drone);
 
+                    let _ = self
+                        .sim_controller_send
+                        .send(ServerEvent::DebugMessage(self.id, format!("Server {}: new route exclude {:?}", self.id, self.excluded_nodes)));
+
                     // Reconstruct the packet with a new path
                     if let Some(fragments) = self.pending_messages.get(&session_id) {
                         if let Some(packet) = fragments.get(nack.fragment_index as usize) {

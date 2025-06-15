@@ -530,15 +530,22 @@ impl CommunicationServer {
 
         match nack.nack_type {
             NackType::Dropped => {
-                let _ = self
-                    .sim_controller_send
-                    .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
+
                 if *counter == 4 {
                     // Too many NACKs, calculate an alternative path
+
+                    let _ = self
+                        .sim_controller_send
+                        .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
+
                     info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
 
                     // Exclude the problematic node from future routing
                     self.excluded_nodes.insert(id_drop_drone);
+
+                    let _ = self
+                        .sim_controller_send
+                        .send(ServerEvent::DebugMessage(self.id, format!("Server {}: new route exclude {:?}", self.id, self.excluded_nodes)));
 
                     // Reconstruct the packet with a new path
                     if let Some(fragments) = self.pending_messages.get(&session_id) {
