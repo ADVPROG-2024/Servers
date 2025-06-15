@@ -390,10 +390,12 @@ impl DronegowskiServer for ContentServer {
             ServerCommand::AddSender(id, sender) => {
                 //log::info!("ContentServer {}: Received AddSender Command: add {}", self.id, id);
                 self.add_neighbor(id, sender);
+                self.network_discovery();
             }
             ServerCommand::RemoveSender(id) => {
                 //log::info!("ContentServer {}: Received RemoveSender Command: remove {}", self.id, id);
                 self.remove_neighbor(id);
+                self.network_discovery();
             }
             ServerCommand::ControllerShortcut(packet)=>{
                 //info!("ContentServer {}: Received ControllerShortcut", self.id);

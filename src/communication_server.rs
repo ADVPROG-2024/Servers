@@ -232,10 +232,12 @@ impl DronegowskiServer for CommunicationServer {
             ServerCommand::AddSender(id, sender) => {
                 // Add a new neighbor to the server's sender map
                 self.add_neighbor(id, sender);
+                self.network_discovery();
             },
             ServerCommand::RemoveSender(id) => {
                 // Remove a neighbor from the server's sender map
                 self.remove_neighbor(id);
+                self.network_discovery();
             },
             ServerCommand::ControllerShortcut(packet) => {
                 // Handle a packet received directly from the Simulation Controller
