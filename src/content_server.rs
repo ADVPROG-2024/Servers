@@ -395,6 +395,7 @@ impl DronegowskiServer for ContentServer {
                 //info!("ContentServer {}: Received ControllerShortcut", self.id);
                 self.handle_packet(packet.clone());
             }
+            ServerCommand::RequestNetworkDiscovery() => self.network_discovery(),
             _ =>{
                 log::error!("ContentServer {}: Received unhandled ServerCommand type", self.id);
             }
