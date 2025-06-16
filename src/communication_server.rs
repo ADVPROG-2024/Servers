@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::process::Command;
 use std::time::Duration;
-use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
+use crossbeam_channel::{select, select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{assembler, fragment_message, generate_unique_id};
 use dronegowski_utils::hosts::{ClientMessages, ServerCommand, ServerEvent, ServerMessages, ServerType, TestMessage};
 use dronegowski_utils::hosts::ServerType::Communication;
@@ -41,7 +41,7 @@ impl DronegowskiServer for CommunicationServer {
     fn run(&mut self) {
         loop {
             // Use select_biased to prioritize packet reception over command reception
-            select_biased! {
+            select! {
                 recv(self.packet_recv) -> packet_res => {
                     // Handle received packet from neighbors
                     if let Ok(packet) = packet_res {
