@@ -503,6 +503,7 @@ impl ContentServer {
 
     //message sending_methods
     fn send_message(&mut self, message: ServerMessages, destination: NodeId) {
+        self.excluded_nodes.clear();
         //log::info!("ContentServer {}: sending packet to {}", self.id, destination);
         let route=self.compute_best_path(destination).unwrap_or(Vec::new());
         //log::info!("ContentServer {}: sending through route {:?}", self.id, route);
@@ -619,81 +620,108 @@ impl ContentServer {
     }
 
 
-    // nack handling
     fn handle_nack(&mut self, nack: Nack, session_id: u64, id_drop_drone: NodeId) {
-        let key = (nack.fragment_index, session_id, id_drop_drone);
+        if let NackType::Dropped = nack.nack_type {
+            let key = (nack.fragment_index, session_id, id_drop_drone);
+            let counter = self.nack_counter.entry(key).or_insert(0);
+            *counter += 1;
 
-        // Uses Entry to correctly handle counter initialization
-        let counter = self.nack_counter.entry(key).or_insert(0);
-        *counter += 1;
+            info!("DIO CANEEEEE bastardo - Server {} - counter: {:?}, dropid {}", self.id, counter, id_drop_drone);
 
-        match nack.nack_type {
-            NackType::Dropped => {
-                if *counter == 4 {
-                    //info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
-                    let _ = self
-                        .sim_controller_send
-                        .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
+            const RETRY_LIMIT: u64 = 3;
 
-                    // Add the problematic node to excluded nodes
-                    self.excluded_nodes.insert(id_drop_drone);
+            // Se abbiamo superato il limite di tentativi per questo drone...
+            if *counter > RETRY_LIMIT {
+                let _ = self
+                    .sim_controller_send
+                    .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
 
-                    let _ = self
-                        .sim_controller_send
-                        .send(ServerEvent::DebugMessage(self.id, format!("Server {}: new route exclude {:?}", self.id, self.excluded_nodes)));
+                info!("Server {}: Limite NACK ({}) superato per il drone {}. Lo escludo e ricalcolo il percorso per la sessione.", self.id, RETRY_LIMIT, id_drop_drone);
+                self.excluded_nodes.insert(id_drop_drone);
 
-                    // Reconstruct the packet with a new path
-                    if let Some(fragments) = self.pending_messages.get(&session_id) {
-                        if let Some(packet) = fragments.get(nack.fragment_index as usize) {
-                            if let Some(target_server) = packet.routing_header.hops.last() {
-                                if let Some(new_path) = self.compute_route_excluding(target_server) {
+                let _ = self
+                    .sim_controller_send
+                    .send(ServerEvent::DebugMessage(self.id, format!("Server {}: new route exclude {:?}", self.id, self.excluded_nodes)));
 
-                                    // sending route to SC
-                                    let _ = self
-                                        .sim_controller_send
-                                        .send(ServerEvent::Route(new_path.clone()));
+                self.nack_counter.remove(&key); // Rimuoviamo il contatore, il drone è escluso
 
-                                    let mut new_packet = packet.clone();
-                                    new_packet.routing_header.hops = new_path;
-                                    new_packet.routing_header.hop_index = 1;
+                // Tentiamo di trovare una nuova rotta e aggiornare la sessione
+                self.resend_with_new_path(session_id, nack.fragment_index);
+                return;
+            }
 
-                                    if let Some(next_hop) = new_packet.routing_header.hops.get(1) {
-                                        //info!("Client {}: Resending fragment {} via new path: {:?}",self.id, nack.fragment_index, new_packet.routing_header.hops);
-
-                                        self.send_packet_and_notify(new_packet.clone(), *next_hop);
-
-                                        // Reset the counter after rerouting
-                                        // self.nack_counter.remove(&key);
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    warn!("ContentServer {}: Unable to find alternative path", self.id);
-                } else if *counter<4 {
-                    // Standard resend
-                    if let Some(fragments) = self.pending_messages.get(&session_id) {
-                        if let Some(packet) = fragments.get(nack.fragment_index as usize) {
-
-                            //info!("Client {}: Attempt {} for fragment {}", self.id, counter, nack.fragment_index);
-
-                            self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
-                        }
+            // Se siamo sotto il limite, rinvia sullo stesso percorso
+            info!("Server {}: Tentativo #{}. Rinviando frammento {} sullo stesso percorso.", self.id, *counter, nack.fragment_index);
+            if let Some(fragments) = self.pending_messages.get(&session_id) {
+                if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+                    if let Some(&next_hop) = packet.routing_header.hops.get(1) {
+                        self.send_packet_and_notify(packet.clone(), next_hop);
+                    } else {
+                        error!("Server {}: Percorso non valido nel pacchetto pendente per il rinvio.", self.id);
                     }
                 }
             }
-            _ => {
-                // Handling other NACK types
-                self.network_discovery();
-                if let Some(fragments) = self.pending_messages.get(&session_id) {
-                    if let Some(packet) = fragments.get(nack.fragment_index as usize) {
-                        self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
-                    }
+        } else {
+            // Altri tipi di NACK: tentiamo subito un ricalcolo del percorso
+            self.network_discovery();
+            let _ = self
+                .sim_controller_send
+                .send(ServerEvent::DebugMessage(self.id, format!("Server {}: new route?", self.id)));
+
+            if let Some(fragments) = self.pending_messages.get(&session_id) {
+                if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+                    self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
                 }
             }
         }
     }
+
+    fn resend_with_new_path(&mut self, session_id: u64, fragment_index: u64) {
+        // 1. Otteniamo la destinazione con un prestito immutabile
+        let target_client_option: Option<NodeId> =
+            if let Some(fragments) = self.pending_messages.get(&session_id) {
+                if let Some(packet) = fragments.get(fragment_index as usize) {
+                    packet.routing_header.hops.last().cloned()
+                } else { None }
+            } else { return; };
+
+        let target_client = match target_client_option {
+            Some(id) => id,
+            None => return,
+        };
+
+        // 2. Tentiamo di calcolare un percorso escludendo i nodi problematici
+        if let Some(new_path) = self.compute_route_excluding(&target_client) {
+            info!("Server {}: Trovata nuova rotta per la sessione {}: {:?}", self.id, session_id, new_path);
+
+            // 3. Ora abbiamo bisogno di un prestito mutabile per aggiornare lo stato.
+            //    Questo avviene in un nuovo scope, quindi è sicuro.
+            if let Some(fragments) = self.pending_messages.get_mut(&session_id) {
+                for p in fragments.iter_mut() {
+                    p.routing_header.hops = new_path.clone();
+                    p.routing_header.hop_index = 1;
+                }
+            }
+
+            // 4. Infine, inviamo il pacchetto. Abbiamo di nuovo bisogno di un prestito immutabile,
+            //    ma quello mutabile precedente è già stato "rilasciato" alla fine del blocco `if let`.
+            //    Quindi, questa parte è di nuovo sicura.
+            if let Some(fragments) = self.pending_messages.get(&session_id) {
+                if let Some(updated_packet) = fragments.get(fragment_index as usize) {
+                    if let Some(&next_hop) = updated_packet.routing_header.hops.get(1) {
+                        self.send_packet_and_notify(updated_packet.clone(), next_hop);
+                    } else {
+                        error!("Server {}: Il nuovo percorso calcolato è invalido per il frammento {}.", self.id, fragment_index);
+                    }
+                }
+            }
+
+        } else {
+            warn!("Server {}: Impossibile trovare un percorso alternativo per il frammento {}. Il messaggio potrebbe fallire.", self.id, fragment_index);
+            let _ = self.sim_controller_send.send(ServerEvent::Error(self.id, target_client.clone(), format!("No alternative path for fragment {}", fragment_index)));
+        }
+    }
+
     fn compute_route_excluding(&self, target_client: &NodeId) -> Option<Vec<NodeId>> {
         let mut visited = HashSet::new(); // Set to keep track of visited nodes during BFS.
         let mut queue = VecDeque::new(); // Queue for BFS traversal.
