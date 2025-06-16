@@ -421,7 +421,11 @@ impl DronegowskiServer for ContentServer {
 
 
     // network discovery related methods
-    fn network_discovery(&self) {
+    fn network_discovery(&mut self) {
+        info!("ContentServer {}: Starting network discovery. Clearing old topology.", self.id);
+        self.topology.clear();
+        self.node_types.clear();
+        
         //log::info!("ContentServer {}: starting Network discovery", self.id);
         let mut path_trace = Vec::new();
         path_trace.push((self.id, NodeType::Server));

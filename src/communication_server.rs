@@ -58,7 +58,10 @@ impl DronegowskiServer for CommunicationServer {
         }
     }
 
-    fn network_discovery(&self) {
+    fn network_discovery(&mut self) {
+        info!("CommunicationServer {}: Starting network discovery. Clearing old topology.", self.id);
+        self.topology.clear();
+        self.node_types.clear();
         // Start network discovery by creating a path trace
         let mut path_trace = Vec::new();
         path_trace.push((self.id, NodeType::Server));
@@ -289,18 +292,37 @@ impl DronegowskiServer for CommunicationServer {
 
             // Explore neighbors
             for &(node_a, node_b) in &self.topology {
-                if node_a == current && !visited.contains(&node_b) {
-                    if let Some(node_type) = self.node_types.get(&node_b) {
-                        if *node_type != NodeType::Client || node_b == target_client {
-                            visited.insert(node_b);
-                            queue.push_back(node_b);
-                            predecessors.insert(node_b, current);
+                let neighbor_id = if node_a == current {
+                    Some(node_b)
+                } else if node_b == current {
+                    Some(node_a)
+                } else {
+                    None
+                };
+                if let Some(neighbor_id) = neighbor_id {
+                    if !visited.contains(&neighbor_id) {
+                        // Poiché hai detto che i client non possono essere vicini,
+                        // possiamo semplificare la logica di non attraversamento.
+                        // Un server può parlare con qualsiasi tipo di vicino.
+                        // La logica che esclude i client è più rilevante per il client stesso.
+                        // Qui, la lascio per coerenza, ma potrebbe non essere strettamente necessaria.
+                        if let Some(node_type) = self.node_types.get(&neighbor_id) {
+                            if *node_type != NodeType::Client || neighbor_id == target_client {
+                                visited.insert(neighbor_id);
+                                queue.push_back(neighbor_id);
+                                predecessors.insert(neighbor_id, neighbor_id);
+                            }
+                        } else {
+                            // Se non conosciamo il tipo, per sicurezza lo visitiamo
+                            visited.insert(neighbor_id);
+                            queue.push_back(neighbor_id);
+                            predecessors.insert(neighbor_id, current);
                         }
                     }
                 }
             }
         }
-        None  // Return None if no path is found
+        None
     }
 
     fn reconstruct_message<T: DeserializeOwned>(&mut self, key: u64) -> Result<T, Box<dyn Error>> {

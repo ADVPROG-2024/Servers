@@ -8,7 +8,7 @@ use serde::de::DeserializeOwned;
 
 pub trait DronegowskiServer {
     //fn new(id: NodeId, sim_controller_send: Sender<ServerEvent>, sim_controller_recv: Receiver<ServerCommand>, packet_recv: Receiver<Packet>, packet_send: HashMap<NodeId, Sender<Packet>>, server_type: ServerType) -> Self;
-    fn network_discovery(&self);
+    fn network_discovery(&mut self);
     fn run(&mut self);
     fn handle_packet(&mut self, packet: Packet);
     fn handle_command(&mut self, command: ServerCommand);
