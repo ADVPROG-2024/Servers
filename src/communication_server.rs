@@ -181,7 +181,7 @@ impl DronegowskiServer for CommunicationServer {
                 }
                 PacketType::FloodRequest(ref flood_request) => {
                     // Update the graph with the path trace from the FloodRequest
-                    self.update_graph(flood_request.path_trace.clone());
+                    // self.update_graph(flood_request.path_trace.clone());
 
                     // Create a new path trace for the FloodResponse, including this server
                     let mut response_path_trace = flood_request.path_trace.clone();
