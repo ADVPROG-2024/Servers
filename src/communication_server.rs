@@ -606,27 +606,11 @@ impl CommunicationServer {
         };
 
         // 2. Tentiamo di calcolare un percorso escludendo i nodi problematici
-        let mut new_path_option = self.compute_route_excluding(&target_client);
+        if let Some(new_path) = self.compute_route_excluding(&target_client) {
+            info!("Server {}: Trovata nuova rotta per la sessione {}: {:?}", self.id, session_id, new_path);
 
-        // --- INIZIO MODIFICA CHIAVE ---
-        // 3. Se non troviamo un percorso, azzeriamo la lista di esclusione e riproviamo!
-        if new_path_option.is_none() {
-            warn!("Server {}: Nessun percorso alternativo trovato per {}. Azzero i nodi esclusi e tento di nuovo con il percorso migliore.", self.id, target_client);
-
-            // "Perdoniamo" tutti i nodi problematici
-            self.excluded_nodes.clear();
-
-            // Ritentiamo il calcolo del percorso, questa volta senza esclusioni
-            // Usiamo compute_best_path che non considera excluded_nodes
-            new_path_option = self.compute_best_path(target_client);
-        }
-        // --- FINE MODIFICA CHIAVE ---
-
-        // 4. Se abbiamo un percorso (o quello alternativo o quello ricalcolato dopo il reset), lo usiamo
-        if let Some(new_path) = new_path_option {
-            info!("Server {}: Utilizzando nuovo percorso per la sessione {}: {:?}", self.id, session_id, new_path);
-
-            // Aggiorniamo lo stato in pending_messages
+            // 3. Ora abbiamo bisogno di un prestito mutabile per aggiornare lo stato.
+            //    Questo avviene in un nuovo scope, quindi è sicuro.
             if let Some(fragments) = self.pending_messages.get_mut(&session_id) {
                 for p in fragments.iter_mut() {
                     p.routing_header.hops = new_path.clone();
@@ -634,20 +618,22 @@ impl CommunicationServer {
                 }
             }
 
-            // Inviamo il pacchetto aggiornato
+            // 4. Infine, inviamo il pacchetto. Abbiamo di nuovo bisogno di un prestito immutabile,
+            //    ma quello mutabile precedente è già stato "rilasciato" alla fine del blocco `if let`.
+            //    Quindi, questa parte è di nuovo sicura.
             if let Some(fragments) = self.pending_messages.get(&session_id) {
                 if let Some(updated_packet) = fragments.get(fragment_index as usize) {
                     if let Some(&next_hop) = updated_packet.routing_header.hops.get(1) {
                         self.send_packet_and_notify(updated_packet.clone(), next_hop);
+                    } else {
+                        error!("Server {}: Il nuovo percorso calcolato è invalido per il frammento {}.", self.id, fragment_index);
                     }
                 }
             }
+
         } else {
-            // Questo blocco ora viene raggiunto solo se la rete è *completamente* partizionata
-            // e non c'è assolutamente alcun percorso verso il client, neanche all'inizio.
-            error!("Server {}: Fallimento catastrofico. Nessun percorso trovato per il client {} anche dopo aver resettato i nodi esclusi.", self.id, target_client);
-            // A questo punto, il server non può fare altro. Non invierà un errore, ma il messaggio non verrà consegnato.
-            // Il client andrà in timeout se ha un meccanismo per farlo.
+            warn!("Server {}: Impossibile trovare un percorso alternativo per il frammento {}. Il messaggio potrebbe fallire.", self.id, fragment_index);
+            let _ = self.sim_controller_send.send(ServerEvent::Error(self.id, target_client.clone(), format!("No alternative path for fragment {}", fragment_index)));
         }
     }
 
