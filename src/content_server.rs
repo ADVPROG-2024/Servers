@@ -622,70 +622,79 @@ impl ContentServer {
 
     // nack handling
     fn handle_nack(&mut self, nack: Nack, session_id: u64, id_drop_drone: NodeId) {
-        if let NackType::Dropped = nack.nack_type {
-            let key = (nack.fragment_index, session_id, id_drop_drone);
-            let counter = self.nack_counter.entry(key).or_insert(0);
-            *counter += 1;
+        let key = (nack.fragment_index, session_id, id_drop_drone);
 
-            const RETRY_LIMIT: u64 = 3;
+        // Uses Entry to correctly handle counter initialization
+        let counter = self.nack_counter.entry(key).or_insert(0);
+        *counter += 1;
 
-            let _ = self.sim_controller_send.send(ServerEvent::DebugMessage(self.id, format!(
-                "ContentServer {}: NACK #{} per frammento {} da {}. Esclusi: {:?}",
-                self.id, *counter, nack.fragment_index, id_drop_drone, self.excluded_nodes
-            )));
+        match nack.nack_type {
+            NackType::Dropped => {
+                if *counter == 4 {
+                    //info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
+                    let _ = self
+                        .sim_controller_send
+                        .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
 
-            // Se abbiamo superato il limite di tentativi, cambiamo strategia
-            if *counter > RETRY_LIMIT {
-                info!("ContentServer {}: Limite NACK superato per il drone {}. Lo escludo e ricalcolo il percorso.", self.id, id_drop_drone);
-                self.excluded_nodes.insert(id_drop_drone);
-                self.nack_counter.remove(&key); // Rimuoviamo il contatore per questo drone
+                    // Add the problematic node to excluded nodes
+                    self.excluded_nodes.insert(id_drop_drone);
 
-                self.resend_with_new_path(session_id, nack.fragment_index);
-                return;
-            }
+                    let _ = self
+                        .sim_controller_send
+                        .send(ServerEvent::DebugMessage(self.id, format!("Server {}: new route exclude {:?}", self.id, self.excluded_nodes)));
 
-            // Se siamo sotto il limite, rinvia sullo stesso percorso
-            info!("ContentServer {}: Tentativo #{}. Rinviando frammento {} sullo stesso percorso.", self.id, *counter, nack.fragment_index);
-            if let Some(fragments) = self.pending_messages.get(&session_id) {
-                if let Some(packet) = fragments.get(nack.fragment_index as usize) {
-                    self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
+                    // Reconstruct the packet with a new path
+                    if let Some(fragments) = self.pending_messages.get(&session_id) {
+                        if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+                            if let Some(target_server) = packet.routing_header.hops.last() {
+                                if let Some(new_path) = self.compute_route_excluding(target_server) {
+
+                                    // sending route to SC
+                                    let _ = self
+                                        .sim_controller_send
+                                        .send(ServerEvent::Route(new_path.clone()));
+
+                                    let mut new_packet = packet.clone();
+                                    new_packet.routing_header.hops = new_path;
+                                    new_packet.routing_header.hop_index = 1;
+
+                                    if let Some(next_hop) = new_packet.routing_header.hops.get(1) {
+                                        //info!("Client {}: Resending fragment {} via new path: {:?}",self.id, nack.fragment_index, new_packet.routing_header.hops);
+
+                                        self.send_packet_and_notify(new_packet.clone(), *next_hop);
+
+                                        // Reset the counter after rerouting
+                                        // self.nack_counter.remove(&key);
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    warn!("ContentServer {}: Unable to find alternative path", self.id);
+                } else if *counter<4 {
+                    // Standard resend
+                    if let Some(fragments) = self.pending_messages.get(&session_id) {
+                        if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+
+                            //info!("Client {}: Attempt {} for fragment {}", self.id, counter, nack.fragment_index);
+
+                            self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
+                        }
+                    }
                 }
             }
-        } else {
-            // Gestione per altri tipi di NACK: forziamo un ricalcolo del percorso
-            warn!("ContentServer {}: Ricevuto NACK di tipo {:?}. Tento un ricalcolo del percorso.", self.id, nack.nack_type);
-            self.resend_with_new_path(session_id, nack.fragment_index);
-        }
-    }
-
-    fn resend_with_new_path(&mut self, session_id: u64, fragment_index: u64) {
-        if let Some(fragments) = self.pending_messages.get(&session_id) {
-            if let Some(packet) = fragments.get(fragment_index as usize) {
-                if let Some(&target_node) = packet.routing_header.hops.last() {
-                    // Calcola un nuovo percorso escludendo i nodi in self.excluded_nodes
-                    if let Some(new_path) = self.compute_route_excluding(&target_node) {
-                        info!("ContentServer {}: Trovato nuovo percorso per il frammento {}: {:?}", self.id, fragment_index, new_path);
-                        let mut new_packet = packet.clone();
-                        new_packet.routing_header.hops = new_path;
-                        new_packet.routing_header.hop_index = 1;
-
-                        if let Some(&next_hop) = new_packet.routing_header.hops.get(1) {
-                            self.send_packet_and_notify(new_packet, next_hop);
-                        } else {
-                            error!("ContentServer {}: Il nuovo percorso calcolato è invalido per il frammento {}.", self.id, fragment_index);
-                        }
-                    } else {
-                        warn!("ContentServer {}: Impossibile trovare un percorso alternativo per il frammento {}. Invio errore al client di origine.", self.id, fragment_index);
-                        // Se non c'è percorso, non possiamo fare nulla. Notifichiamo il client che ha originato la richiesta.
-                        if let Some(original_client) = packet.routing_header.source() {
-                            self.send_message(ServerMessages::Error(format!("Unreachable node, message could not be delivered")), original_client);
-                        }
+            _ => {
+                // Handling other NACK types
+                self.network_discovery();
+                if let Some(fragments) = self.pending_messages.get(&session_id) {
+                    if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+                        self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
                     }
                 }
             }
         }
     }
-    
     fn compute_route_excluding(&self, target_client: &NodeId) -> Option<Vec<NodeId>> {
         let mut visited = HashSet::new(); // Set to keep track of visited nodes during BFS.
         let mut queue = VecDeque::new(); // Queue for BFS traversal.
