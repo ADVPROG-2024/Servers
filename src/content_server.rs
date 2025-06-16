@@ -420,7 +420,7 @@ impl DronegowskiServer for ContentServer {
 
 
     // network discovery related methods
-    fn network_discovery(&self) {
+    fn network_discovery(&mut self) {
         //log::info!("ContentServer {}: starting Network discovery", self.id);
         let mut path_trace = Vec::new();
         path_trace.push((self.id, NodeType::Server));

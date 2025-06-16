@@ -60,8 +60,12 @@ impl DronegowskiServer for CommunicationServer {
         }
     }
 
-    fn network_discovery(&self) {
+    fn network_discovery(&mut self) {
         // Start network discovery by creating a path trace
+        info!("CommunicationServer {}: Avvio network discovery. Azzero la topologia vecchia.", self.id);
+        self.topology.clear();
+        self.node_types.clear();
+
         let mut path_trace = Vec::new();
         path_trace.push((self.id, NodeType::Server));
 
@@ -532,81 +536,118 @@ impl CommunicationServer {
     }
 
     fn handle_nack(&mut self, nack: Nack, session_id: u64, id_drop_drone: NodeId) {
-        // Handle received NACK
-        let key = (nack.fragment_index, session_id, id_drop_drone);
+        if let NackType::Dropped = nack.nack_type {
+            let key = (nack.fragment_index, session_id, id_drop_drone);
+            let counter = self.nack_counter.entry(key).or_insert(0);
+            *counter += 1;
 
-        // Increment the NACK counter for the fragment
-        let counter = self.nack_counter.entry(key).or_insert(0);
-        *counter += 1;
+            info!("DIO CANEEEEE bastardo - Server {} - counter: {:?}, dropid {}", self.id, counter, id_drop_drone);
 
-        match nack.nack_type {
-            NackType::Dropped => {
+            const RETRY_LIMIT: u64 = 3;
 
-                if *counter == 4 {
-                    // Too many NACKs, calculate an alternative path
+            // Se abbiamo superato il limite di tentativi per questo drone...
+            if *counter > RETRY_LIMIT {
+                let _ = self
+                    .sim_controller_send
+                    .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
 
-                    let _ = self
-                        .sim_controller_send
-                        .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
+                info!("Server {}: Limite NACK ({}) superato per il drone {}. Lo escludo e ricalcolo il percorso per la sessione.", self.id, RETRY_LIMIT, id_drop_drone);
+                self.excluded_nodes.insert(id_drop_drone);
 
-                    info!("Client {}: Too many NACKs for fragment {}. Calculating alternative path", self.id, nack.fragment_index);
+                let _ = self
+                    .sim_controller_send
+                    .send(ServerEvent::DebugMessage(self.id, format!("Server {}: new route exclude {:?}", self.id, self.excluded_nodes)));
 
-                    // Exclude the problematic node from future routing
-                    self.excluded_nodes.insert(id_drop_drone);
+                self.nack_counter.remove(&key); // Rimuoviamo il contatore, il drone è escluso
 
-                    let _ = self
-                        .sim_controller_send
-                        .send(ServerEvent::DebugMessage(self.id, format!("Server {}: new route exclude {:?}", self.id, self.excluded_nodes)));
+                // Tentiamo di trovare una nuova rotta e aggiornare la sessione
+                self.resend_with_new_path(session_id, nack.fragment_index);
+                return;
+            }
 
-                    // Reconstruct the packet with a new path
-                    if let Some(fragments) = self.pending_messages.get(&session_id) {
-                        if let Some(packet) = fragments.get(nack.fragment_index as usize) {
-                            if let Some(target_server) = packet.routing_header.hops.last() {
-                                if let Some(new_path) = self.compute_route_excluding(target_server) {
-
-                                    // sending route to SC
-                                    let _send_sc = self
-                                        .sim_controller_send
-                                        .send(ServerEvent::Route(new_path.clone()));
-
-                                    let mut new_packet = packet.clone();
-                                    new_packet.routing_header.hops = new_path;
-                                    new_packet.routing_header.hop_index = 1;
-
-                                    if let Some(next_hop) = new_packet.routing_header.hops.get(1) {
-                                        info!("Client {}: Resending fragment {} via new path: {:?}",
-                                        self.id, nack.fragment_index, new_packet.routing_header.hops);
-                                        self.send_packet_and_notify(new_packet.clone(), *next_hop);  // Resend the packet
-
-                                        // Reset the NACK counter after rerouting
-                                        // self.nack_counter.remove(&key);
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    warn!("CommunicationServer {}: Unable to find alternative path", self.id);
-                } else if *counter<4 {
-                    // Standard resend of the fragment
-                    if let Some(fragments) = self.pending_messages.get(&session_id) {
-                        if let Some(packet) = fragments.get(nack.fragment_index as usize) {
-                            info!("Communication server {}: Attempt {} for fragment {}",
-                            self.id, counter, nack.fragment_index);
-                            self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
-                        }
+            // Se siamo sotto il limite, rinvia sullo stesso percorso
+            info!("Server {}: Tentativo #{}. Rinviando frammento {} sullo stesso percorso.", self.id, *counter, nack.fragment_index);
+            if let Some(fragments) = self.pending_messages.get(&session_id) {
+                if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+                    if let Some(&next_hop) = packet.routing_header.hops.get(1) {
+                        self.send_packet_and_notify(packet.clone(), next_hop);
+                    } else {
+                        error!("Server {}: Percorso non valido nel pacchetto pendente per il rinvio.", self.id);
                     }
                 }
             }
-            _ => {
-                // Handle other types of NACKs (e.g., network discovery)
-                self.network_discovery();
-                if let Some(fragments) = self.pending_messages.get(&session_id) {
-                    if let Some(packet) = fragments.get(nack.fragment_index as usize) {
-                        self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
+        } else {
+            // Altri tipi di NACK: tentiamo subito un ricalcolo del percorso
+            self.network_discovery();
+            let _ = self
+                .sim_controller_send
+                .send(ServerEvent::DebugMessage(self.id, format!("Server {}: new route?", self.id)));
+
+            if let Some(fragments) = self.pending_messages.get(&session_id) {
+                if let Some(packet) = fragments.get(nack.fragment_index as usize) {
+                    self.send_packet_and_notify(packet.clone(), packet.routing_header.hops[1]);
+                }
+            }
+        }
+    }
+
+    fn resend_with_new_path(&mut self, session_id: u64, fragment_index: u64) {
+        // 1. Otteniamo la destinazione con un prestito immutabile
+        let target_client_option: Option<NodeId> =
+            if let Some(fragments) = self.pending_messages.get(&session_id) {
+                if let Some(packet) = fragments.get(fragment_index as usize) {
+                    packet.routing_header.hops.last().cloned()
+                } else { None }
+            } else { return; };
+
+        let target_client = match target_client_option {
+            Some(id) => id,
+            None => return,
+        };
+
+        // 2. Tentiamo di calcolare un percorso escludendo i nodi problematici
+        let mut new_path_option = self.compute_route_excluding(&target_client);
+
+        // --- INIZIO MODIFICA CHIAVE ---
+        // 3. Se non troviamo un percorso, azzeriamo la lista di esclusione e riproviamo!
+        if new_path_option.is_none() {
+            warn!("Server {}: Nessun percorso alternativo trovato per {}. Azzero i nodi esclusi e tento di nuovo con il percorso migliore.", self.id, target_client);
+
+            // "Perdoniamo" tutti i nodi problematici
+            self.excluded_nodes.clear();
+
+            // Ritentiamo il calcolo del percorso, questa volta senza esclusioni
+            // Usiamo compute_best_path che non considera excluded_nodes
+            new_path_option = self.compute_best_path(target_client);
+        }
+        // --- FINE MODIFICA CHIAVE ---
+
+        // 4. Se abbiamo un percorso (o quello alternativo o quello ricalcolato dopo il reset), lo usiamo
+        if let Some(new_path) = new_path_option {
+            info!("Server {}: Utilizzando nuovo percorso per la sessione {}: {:?}", self.id, session_id, new_path);
+
+            // Aggiorniamo lo stato in pending_messages
+            if let Some(fragments) = self.pending_messages.get_mut(&session_id) {
+                for p in fragments.iter_mut() {
+                    p.routing_header.hops = new_path.clone();
+                    p.routing_header.hop_index = 1;
+                }
+            }
+
+            // Inviamo il pacchetto aggiornato
+            if let Some(fragments) = self.pending_messages.get(&session_id) {
+                if let Some(updated_packet) = fragments.get(fragment_index as usize) {
+                    if let Some(&next_hop) = updated_packet.routing_header.hops.get(1) {
+                        self.send_packet_and_notify(updated_packet.clone(), next_hop);
                     }
                 }
             }
+        } else {
+            // Questo blocco ora viene raggiunto solo se la rete è *completamente* partizionata
+            // e non c'è assolutamente alcun percorso verso il client, neanche all'inizio.
+            error!("Server {}: Fallimento catastrofico. Nessun percorso trovato per il client {} anche dopo aver resettato i nodi esclusi.", self.id, target_client);
+            // A questo punto, il server non può fare altro. Non invierà un errore, ma il messaggio non verrà consegnato.
+            // Il client andrà in timeout se ha un meccanismo per farlo.
         }
     }
 
