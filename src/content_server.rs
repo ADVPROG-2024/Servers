@@ -160,11 +160,10 @@ impl DronegowskiServer for ContentServer {
     // packet receiving
     fn handle_packet(&mut self, packet: Packet){
         //log::info!("ContentServer {}: Received packet {:?}", self.id, packet);
-        if let Some(source_id) = packet.routing_header.source(){
-            let key = packet.session_id;
-            match packet.pack_type {
-                PacketType::MsgFragment(ref fragment) => {
-
+        let key = packet.session_id;
+        match packet.pack_type {
+            PacketType::MsgFragment(ref fragment) => {
+                if let Some(source_id) = packet.routing_header.source() {
                     let _ = self
                         .sim_controller_send
                         .send(ServerEvent::DebugMessage(self.id, format!("Client {}: received from {}", self.id, source_id)));
@@ -193,17 +192,17 @@ impl DronegowskiServer for ContentServer {
 
                                             // handles the message in relation of its type
                                             match client_messages {
-                                                ClientMessages::ServerType =>{
+                                                ClientMessages::ServerType => {
                                                     log::info!("ContentServer {}: Received server type request from {}", self.id, source_id);
                                                     self.send_message(ServerMessages::ServerType(ServerType::Content), source_id);
                                                 },
-                                                ClientMessages::FilesList =>{
+                                                ClientMessages::FilesList => {
                                                     //log::info!("ContentServer {}: Received FilesList request from {}", self.id, source_id);
                                                     let list = self.text.list_files();
                                                     //log::info!("ContentServer {}: sending FilesList to {}", self.id, source_id);
                                                     self.send_message(ServerMessages::FilesList(list), source_id);
                                                 },
-                                                ClientMessages::File(file_id) =>{
+                                                ClientMessages::File(file_id) => {
                                                     //log::info!("ContentServer {}: Received File request (file_id {}) from {}", self.id, file_id, source_id);
                                                     match self.text.get_file_text(file_id) {
                                                         Some(text) => {
@@ -212,11 +211,11 @@ impl DronegowskiServer for ContentServer {
                                                         },
                                                         None => {
                                                             //log::info!("ContentServer {}: file not found, sending error to {}", self.id, source_id);
-                                                            self.send_message(ServerMessages::Error("file not found".to_string()),source_id);
+                                                            self.send_message(ServerMessages::Error("file not found".to_string()), source_id);
                                                         }
                                                     }
                                                 },
-                                                ClientMessages::Media(media_id) =>{
+                                                ClientMessages::Media(media_id) => {
                                                     //log::info!("ContentServer {}: Received Media request (media_id {}) from {}", self.id, media_id, source_id);
                                                     match self.media.get_media(media_id) {
                                                         Some(media) => {
@@ -225,7 +224,7 @@ impl DronegowskiServer for ContentServer {
                                                         },
                                                         None => {
                                                             //log::info!("ContentServer {}: media not found, sending error to {}", self.id, source_id);
-                                                            self.send_message(ServerMessages::Error("media not found".to_string()),source_id)
+                                                            self.send_message(ServerMessages::Error("media not found".to_string()), source_id)
                                                         },
                                                     }
                                                 },
@@ -244,51 +243,51 @@ impl DronegowskiServer for ContentServer {
                         }
                     }
                 }
-                PacketType::FloodResponse(flood_response) => {
-                    log::info!("ContentServer {}: Received FloodResponse: {:?}", self.id, flood_response);
+            }
+            PacketType::FloodResponse(flood_response) => {
+                log::info!("ContentServer {}: Received FloodResponse: {:?}", self.id, flood_response);
 
-                    // update the graph knowledge based on the new FloodResponse
-                    self.update_graph(flood_response.path_trace);
-                }
-                PacketType::FloodRequest(flood_request) => {
-                    log::info!("ContentServer {}: Received FloodRequest: {:?}", self.id, flood_request);
+                // update the graph knowledge based on the new FloodResponse
+                self.update_graph(flood_response.path_trace);
+            }
+            PacketType::FloodRequest(flood_request) => {
+                log::info!("ContentServer {}: Received FloodRequest: {:?}", self.id, flood_request);
 
-                    // push myself in the path trace
-                    let mut response_path_trace = flood_request.path_trace.clone();
-                    response_path_trace.push((self.id, NodeType::Server));
+                // push myself in the path trace
+                let mut response_path_trace = flood_request.path_trace.clone();
+                response_path_trace.push((self.id, NodeType::Server));
 
 
-                    // build the flood response packet.
-                    let flood_response = FloodResponse {
-                        flood_id: flood_request.flood_id,
-                        path_trace: response_path_trace.clone(),
-                    };
-                    let response_packet = Packet {
-                        pack_type: PacketType::FloodResponse(flood_response),
-                        routing_header: SourceRoutingHeader {
-                            hop_index: 1,
-                            hops: response_path_trace.iter().rev().map(|(id, _)| *id).collect(),
-                        },
-                        session_id: packet.session_id,
-                    };
+                // build the flood response packet.
+                let flood_response = FloodResponse {
+                    flood_id: flood_request.flood_id,
+                    path_trace: response_path_trace.clone(),
+                };
+                let response_packet = Packet {
+                    pack_type: PacketType::FloodResponse(flood_response),
+                    routing_header: SourceRoutingHeader {
+                        hop_index: 1,
+                        hops: response_path_trace.iter().rev().map(|(id, _)| *id).collect(),
+                    },
+                    session_id: packet.session_id,
+                };
 
-                    info!("ContentServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
-                    // send the flood response
-                    let next_node = response_packet.routing_header.hops[1];
+                info!("ContentServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
+                // send the flood response
+                let next_node = response_packet.routing_header.hops[1];
 
-                    self.send_packet_and_notify(response_packet.clone(), next_node);
-                }
-                PacketType::Ack(ack) => {
-                    //log::info!("ContentServer {}: Received Ack {:?} from {}", self.id, ack, source_id);
-                    self.handle_ack(ack.clone(), packet.session_id);
-                }
-                PacketType::Nack(ref nack) => {
-                    //log::info!("ContentServer {}: Received Nack {:?} from {}", self.id, nack, source_id);
+                self.send_packet_and_notify(response_packet.clone(), next_node);
+            }
+            PacketType::Ack(ack) => {
+                //log::info!("ContentServer {}: Received Ack {:?} from {}", self.id, ack, source_id);
+                self.handle_ack(ack.clone(), packet.session_id);
+            }
+            PacketType::Nack(ref nack) => {
+                //log::info!("ContentServer {}: Received Nack {:?} from {}", self.id, nack, source_id);
 
-                    // call the nack handler method passing it the drone which dropped
-                    let drop_drone = packet.clone().routing_header.hops[0];
-                    self.handle_nack(nack.clone(), packet.session_id, drop_drone);
-                }
+                // call the nack handler method passing it the drone which dropped
+                let drop_drone = packet.clone().routing_header.hops[0];
+                self.handle_nack(nack.clone(), packet.session_id, drop_drone);
             }
         }
     }
