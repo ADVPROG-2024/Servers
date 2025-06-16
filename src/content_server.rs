@@ -357,9 +357,13 @@ impl DronegowskiServer for ContentServer {
 
             for &(node_a, node_b) in &self.topology {
                 if node_a == current && !visited.contains(&node_b) {
-                    visited.insert(node_b);
-                    queue.push_back(node_b);
-                    predecessors.insert(node_b, current);
+                    if let Some(node_type) = self.node_types.get(&node_b) {
+                        if *node_type != NodeType::Client || node_b == target_client {
+                            visited.insert(node_b);
+                            queue.push_back(node_b);
+                            predecessors.insert(node_b, current);
+                        }
+                    }
                 }
             }
         }
@@ -706,13 +710,23 @@ impl ContentServer {
             // Iterate over neighbors excluding problematic nodes
             for &(a, b) in &self.topology { // Iterate through the network topology (edges).
                 if a == current_node && !self.excluded_nodes.contains(&b) && !visited.contains(&b) { // If 'b' is a neighbor of 'a', 'b' is not excluded, and 'b' is not visited.
-                    visited.insert(b); // Mark 'b' as visited.
-                    queue.push_back(b); // Add 'b' to the queue for further exploration.
-                    predecessors.insert(b, a); // Set 'a' as the predecessor of 'b'.
+                    if a == current_node && !visited.contains(&b) {
+                        if let Some(node_type) = self.node_types.get(&b) {
+                            if *node_type != NodeType::Client || *b == target_client {
+                                visited.insert(b); // Mark 'b' as visited.
+                                queue.push_back(b); // Add 'b' to the queue for further exploration.
+                                predecessors.insert(b, a); // Set 'a' as the predecessor of 'b'.
+                            }
+                        }
+                    }
                 } else if b == current_node && !self.excluded_nodes.contains(&a) && !visited.contains(&a) { // If 'a' is a neighbor of 'b', 'a' is not excluded and 'a' is not visited.
-                    visited.insert(a); // Mark 'a' as visited.
-                    queue.push_back(a); // Add 'a' to the queue.
-                    predecessors.insert(a, b); // Set 'b' as the predecessor of 'a'.
+                    if let Some(node_type) = self.node_types.get(&a) {
+                        if *node_type != NodeType::Client || *a == target_client {
+                            visited.insert(a); // Mark 'a' as visited.
+                            queue.push_back(a); // Add 'a' to the queue.
+                            predecessors.insert(a, b); // Set 'b' as the predecessor of 'a'.
+                        }
+                    }
                 }
             }
         }
