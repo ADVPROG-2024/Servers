@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::time::Duration;
-use crossbeam_channel::{select, select_biased, unbounded, Receiver, Sender};
+use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
 use dronegowski_utils::functions::{assembler, fragment_message, generate_unique_id};
 use dronegowski_utils::hosts::{ClientMessages, FileContent, ServerCommand, ServerEvent, ServerMessages, ServerType, TestMessage};
 use log::{error, info, log, warn};
@@ -140,7 +140,7 @@ pub struct ContentServer {
 impl DronegowskiServer for ContentServer {
     fn run(&mut self) {
         loop {
-            select! {
+            select_biased! {
                 recv(self.packet_recv) -> packet_res => {
                     //log::info!("ContentServer {}: Received packet {:?}", self.id, packet_res);
                     if let Ok(packet) = packet_res {
