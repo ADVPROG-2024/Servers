@@ -571,6 +571,7 @@ impl ContentServer {
 
     }
     fn send_packet_and_notify(&self, packet: Packet, recipient_id: NodeId) {
+        // Send a packet to a recipient and notify the Simulation Controller
         if let Some(sender) = self.packet_send.get(&recipient_id) {
             if let Err(e) = sender.send(packet.clone()) {
                 error!(
@@ -580,15 +581,15 @@ impl ContentServer {
                     e
                 );
             } else {
-                // info!(
-                //     "ContentServer {}: Packet sent to {}: must arrive at {}",
-                //     self.id,
-                //     recipient_id,
-                //     packet.routing_header.hops.last().unwrap(),
-                // );
+                info!(
+                    "ContentServer {}: Packet sent to {}: must arrive at {}",
+                    self.id,
+                    recipient_id,
+                    packet.routing_header.hops.last().unwrap(),
+                );
 
-                // Notifies the SC of packet sending.
-                let _send_sc = self
+                // Notify the Simulation Controller of packet sending
+                let _ = self
                     .sim_controller_send
                     .send(ServerEvent::PacketSent(packet));
             }
@@ -596,6 +597,7 @@ impl ContentServer {
             error!("ContentServer {}: No sender for node {}", self.id, recipient_id);
         }
     }
+
 
     // ack handling
     fn handle_ack(&mut self, ack: Ack, session_id: u64) {
