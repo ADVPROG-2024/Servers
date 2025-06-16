@@ -96,11 +96,58 @@ impl DronegowskiServer for CommunicationServer {
 
     fn handle_packet(&mut self, packet: Packet) {
         info!("CommunicationServer {}: Packet received: {:?}", self.id, packet);
-        // Handle received packet
-        if let Some(client_id) = packet.routing_header.source() {  // Get the source of the packet
-            let key = packet.session_id;  // Identify the session ID
-            match packet.pack_type {
-                PacketType::MsgFragment(ref fragment) => {
+        match packet.pack_type {
+            PacketType::FloodResponse(flood_response) => {
+                // Handle FloodResponse to update the network graph
+                info!("CommuncationServer {}: Received FloodResponse: {:?}", self.id, flood_response);
+                self.update_graph(flood_response.path_trace);
+            }
+            PacketType::FloodRequest(ref flood_request) => {
+                // Update the graph with the path trace from the FloodRequest
+                // self.update_graph(flood_request.path_trace.clone());
+
+                info!("CommuncationServer {}: Received FloodRequest: {:?}", self.id, flood_request);
+
+                // Create a new path trace for the FloodResponse, including this server
+                let mut response_path_trace = flood_request.path_trace.clone();
+                response_path_trace.push((self.id, NodeType::Server));
+
+                // Create the FloodResponse
+                let flood_response = FloodResponse {
+                    flood_id: flood_request.flood_id,
+                    path_trace: response_path_trace.clone(),  // Use the new path trace
+                };
+
+                // Create the response packet with reversed routing path
+                let response_packet = Packet {
+                    pack_type: PacketType::FloodResponse(flood_response),
+                    routing_header: SourceRoutingHeader {
+                        hop_index: 1,
+                        hops: response_path_trace.iter().rev().map(|(id, _)| *id).collect(),
+                    },
+                    session_id: packet.session_id,
+                };
+
+                // Send the FloodResponse back to the source
+                info!("CommuncationServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
+                let next_node = response_packet.routing_header.hops[1];
+                self.send_packet_and_notify(response_packet, next_node);
+
+            }
+
+            PacketType::Ack(ack) => {
+                // Handle received ACK from a source
+                self.handle_ack(ack.clone(), packet.session_id);
+            }
+            PacketType::Nack(ref nack) => {
+                // Handle received NACK from a source
+                let drop_drone = packet.clone().routing_header.hops[0];
+                self.handle_nack(nack.clone(), packet.session_id, drop_drone);
+            }
+            PacketType::MsgFragment(ref fragment) => {
+                if let Some(client_id) = packet.routing_header.source() {  // Get the source of the packet
+                    let key = packet.session_id;  // Identify the session ID
+
                     // Handle received message fragment from a client
                     let _ = self
                         .sim_controller_send
@@ -161,7 +208,6 @@ impl DronegowskiServer for CommunicationServer {
                                                         // Send an error message to the client
                                                         self.send_message(ServerMessages::Error(format!("{} not registered to server", client_id)), client_id);
                                                     }
-
                                                 },
                                                 _ => {
                                                     // Handle unknown client messages
@@ -178,59 +224,14 @@ impl DronegowskiServer for CommunicationServer {
                         }
                     }
                 }
-                PacketType::FloodResponse(flood_response) => {
-                    // Handle FloodResponse to update the network graph
-                    info!("CommuncationServer {}: Received FloodResponse: {:?}", self.id, flood_response);
-                    self.update_graph(flood_response.path_trace);
-                }
-                PacketType::FloodRequest(ref flood_request) => {
-                    // Update the graph with the path trace from the FloodRequest
-                    // self.update_graph(flood_request.path_trace.clone());
-
-                    info!("CommuncationServer {}: Received FloodRequest: {:?}", self.id, flood_request);
-
-                    // Create a new path trace for the FloodResponse, including this server
-                    let mut response_path_trace = flood_request.path_trace.clone();
-                    response_path_trace.push((self.id, NodeType::Server));
-
-                    // Create the FloodResponse
-                    let flood_response = FloodResponse {
-                        flood_id: flood_request.flood_id,
-                        path_trace: response_path_trace.clone(),  // Use the new path trace
-                    };
-
-                    // Create the response packet with reversed routing path
-                    let response_packet = Packet {
-                        pack_type: PacketType::FloodResponse(flood_response),
-                        routing_header: SourceRoutingHeader {
-                            hop_index: 1,
-                            hops: response_path_trace.iter().rev().map(|(id, _)| *id).collect(),
-                        },
-                        session_id: packet.session_id,
-                    };
-
-                    // Send the FloodResponse back to the source
-                    info!("CommuncationServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
-                    let next_node = response_packet.routing_header.hops[1];
-                    self.send_packet_and_notify(response_packet, next_node);
-
-                }
-
-                PacketType::Ack(ack) => {
-                    // Handle received ACK from a source
-                    self.handle_ack(ack.clone(), packet.session_id);
-                }
-                PacketType::Nack(ref nack) => {
-                    // Handle received NACK from a source
-                    let drop_drone = packet.clone().routing_header.hops[0];
-                    self.handle_nack(nack.clone(), packet.session_id, drop_drone);
-                }
-                _ => {
-                    // Handle unhandled packet types
-                    log::error!("CommunicationServer {}: Received unhandled packet type", self.id);
-                }
+            }
+            _ => {
+                // Handle unhandled packet types
+                log::error!("CommunicationServer {}: Received unhandled packet type", self.id);
             }
         }
+        // Handle received packet
+
     }
 
     fn handle_command(&mut self, command: ServerCommand) {
