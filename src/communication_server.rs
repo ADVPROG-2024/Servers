@@ -266,7 +266,7 @@ impl DronegowskiServer for CommunicationServer {
         }
     }
 
-    fn compute_best_path(&self, target_client: NodeId) -> Option<Vec<NodeId>> {
+    fn compute_best_path(&self, target_client: &NodeId) -> Option<Vec<NodeId>> {
         use std::collections::VecDeque;
 
         // Use BFS to compute the best path to the target client
@@ -291,7 +291,7 @@ impl DronegowskiServer for CommunicationServer {
             for &(node_a, node_b) in &self.topology {
                 if node_a == current && !visited.contains(&node_b) {
                     if let Some(node_type) = self.node_types.get(&node_b) {
-                        if *node_type != NodeType::Client || node_b == target_client {
+                        if *node_type != NodeType::Client || node_b == *target_client {
                             visited.insert(node_b);
                             queue.push_back(node_b);
                             predecessors.insert(node_b, current);
