@@ -277,22 +277,6 @@ impl DronegowskiServer for ContentServer {
                     let next_node = response_packet.routing_header.hops[1];
 
                     self.send_packet_and_notify(response_packet.clone(), next_node);
-                    // if let Some(sender) = self.packet_send.get(&next_node) {
-                    //     match sender.send_timeout(response_packet.clone(), Duration::from_millis(500)) {
-                    //         Err(_) => {
-                    //             log::warn!("ContentServer {}: Timeout sending packet to {}", self.id, next_node);
-                    //         }
-                    //         Ok(..)=>{
-                    //             //log::info!("ContentServer {}: Sent FloodResponse back to {}", self.id, next_node);
-                    //             // notify the SC that I sent a flood_response
-                    //             let _ = self
-                    //                 .sim_controller_send
-                    //                 .send(ServerEvent::PacketSent(response_packet.clone()));
-                    //         }
-                    //     }
-                    // } else {
-                    //     log::error!("ContentServer {}: No sender found for node {}", self.id, next_node);
-                    // }
                 }
                 PacketType::Ack(ack) => {
                     //log::info!("ContentServer {}: Received Ack {:?} from {}", self.id, ack, source_id);

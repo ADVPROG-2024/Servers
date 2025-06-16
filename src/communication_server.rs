@@ -206,7 +206,7 @@ impl DronegowskiServer for CommunicationServer {
                     // Send the FloodResponse back to the source
                     info!("CommuncationServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
                     let next_node = response_packet.routing_header.hops[1];
-                    self.send_packet_and_notify(packet.clone(), next_node);
+                    self.send_packet_and_notify(response_packet, next_node);
 
                 }
 
