@@ -344,7 +344,6 @@ impl DronegowskiServer for CommunicationServer {
         // Add a new neighbor to the server's sender map
         if let std::collections::hash_map::Entry::Vacant(e) = self.packet_send.entry(node_id) {
             e.insert(sender);
-            self.network_discovery();  // Trigger network discovery after adding a neighbor
         } else {
             log::error!("CommunicationServer {}: Sender for node {node_id} already stored in the map!", self.id);
         }
@@ -355,7 +354,6 @@ impl DronegowskiServer for CommunicationServer {
         if self.packet_send.contains_key(&node_id) {
             self.packet_send.remove(&node_id);
             self.remove_from_topology(node_id);  // Remove the node from the topology
-            self.network_discovery();  // Trigger network discovery after removing a neighbor
         } else {
             log::error!("CommunicationServer {}: the {} is not a neighbour", self.id, node_id);
         }

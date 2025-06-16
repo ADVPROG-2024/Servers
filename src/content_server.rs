@@ -396,8 +396,6 @@ impl DronegowskiServer for ContentServer {
             e.insert(sender);
             //log::info!("ContentServer {}: Successfully added {}", self.id, node_id);
             //log::info!("ContentServer {}: starting a new network discovery", self.id);
-            self.network_discovery();
-
         } else {
             log::error!("ContentServer {}: Sender for node {node_id} already stored in the map!", self.id);
         }
@@ -408,7 +406,6 @@ impl DronegowskiServer for ContentServer {
             self.remove_from_topology(node_id);
             //log::info!("ContentServer {}: Successfully removed neighbour {}", self.id, node_id);
             //log::info!("ContentServer {}: starting a new network discovery", self.id);
-            self.network_discovery();
         } else {
             log::error!("ContentServer {}: the {} is not a neighbour", self.id, node_id);
         }
