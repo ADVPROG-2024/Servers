@@ -95,18 +95,18 @@ impl DronegowskiServer for CommunicationServer {
     }
 
     fn handle_packet(&mut self, packet: Packet) {
-        info!("CommunicationServer {}: Packet received: {:?}", self.id, packet);
+        //info!("CommunicationServer {}: Packet received: {:?}", self.id, packet);
         match packet.pack_type {
             PacketType::FloodResponse(flood_response) => {
                 // Handle FloodResponse to update the network graph
-                info!("CommuncationServer {}: Received FloodResponse: {:?}", self.id, flood_response);
+                //info!("CommuncationServer {}: Received FloodResponse: {:?}", self.id, flood_response);
                 self.update_graph(flood_response.path_trace);
             }
             PacketType::FloodRequest(ref flood_request) => {
                 // Update the graph with the path trace from the FloodRequest
                 // self.update_graph(flood_request.path_trace.clone());
 
-                info!("CommuncationServer {}: Received FloodRequest: {:?}", self.id, flood_request);
+                //info!("CommuncationServer {}: Received FloodRequest: {:?}", self.id, flood_request);
 
                 // Create a new path trace for the FloodResponse, including this server
                 let mut response_path_trace = flood_request.path_trace.clone();
@@ -129,7 +129,7 @@ impl DronegowskiServer for CommunicationServer {
                 };
 
                 // Send the FloodResponse back to the source
-                info!("CommuncationServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
+                //info!("CommuncationServer {}: Sending FloodResponse: {:?}", self.id, response_packet);
                 let next_node = response_packet.routing_header.hops[1];
                 self.send_packet_and_notify(response_packet, next_node);
 
