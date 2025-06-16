@@ -46,6 +46,8 @@ impl DronegowskiServer for CommunicationServer {
                     // Handle received packet from neighbors
                     if let Ok(packet) = packet_res {
                         self.handle_packet(packet);
+                    } else {
+                        error!("CommunicationServer {}: Error receiving packet", self.id); // Logged when there's an error receiving a packet from the `packet_recv` channel. Indicates a problem with the channel itself or the sender.
                     }
                 },
                 recv(self.sim_controller_recv) -> command_res => {
@@ -93,6 +95,7 @@ impl DronegowskiServer for CommunicationServer {
     }
 
     fn handle_packet(&mut self, packet: Packet) {
+        info!("CommunicationServer {}: Packet received: {:?}", self.id, packet);
         // Handle received packet
         if let Some(client_id) = packet.routing_header.source() {  // Get the source of the packet
             let key = packet.session_id;  // Identify the session ID
