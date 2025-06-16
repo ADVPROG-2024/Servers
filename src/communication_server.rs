@@ -177,11 +177,14 @@ impl DronegowskiServer for CommunicationServer {
                 }
                 PacketType::FloodResponse(flood_response) => {
                     // Handle FloodResponse to update the network graph
+                    info!("CommuncationServer {}: Received FloodResponse: {:?}", self.id, flood_response);
                     self.update_graph(flood_response.path_trace);
                 }
                 PacketType::FloodRequest(ref flood_request) => {
                     // Update the graph with the path trace from the FloodRequest
                     // self.update_graph(flood_request.path_trace.clone());
+
+                    info!("CommuncationServer {}: Received FloodRequest: {:?}", self.id, flood_request);
 
                     // Create a new path trace for the FloodResponse, including this server
                     let mut response_path_trace = flood_request.path_trace.clone();
