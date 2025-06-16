@@ -436,6 +436,7 @@ impl CommunicationServer {
     }
 
     fn send_message(&mut self, message: ServerMessages, destination: NodeId) {
+        self.excluded_nodes.clear();
         // Attempt to compute the best path to the destination.
         // If no valid path is found, an empty vector is used as a fallback.
         let route = self.compute_best_path(destination).unwrap_or(Vec::new());
