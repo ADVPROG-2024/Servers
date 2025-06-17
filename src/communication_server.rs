@@ -302,7 +302,7 @@ impl DronegowskiServer for CommunicationServer {
             for &(node_a, node_b) in &self.topology {
                 if node_a == current && !visited.contains(&node_b) {
                     if let Some(node_type) = self.node_types.get(&node_b) {
-                        if *node_type != NodeType::Client || node_b == target_client {
+                        if *node_type == NodeType::Drone || node_b == target_client {
                             visited.insert(node_b);
                             queue.push_back(node_b);
                             predecessors.insert(node_b, current);
