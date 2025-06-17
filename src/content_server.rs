@@ -166,7 +166,7 @@ impl DronegowskiServer for ContentServer {
                 if let Some(source_id) = packet.routing_header.source() {
                     let _ = self
                         .sim_controller_send
-                        .send(ServerEvent::DebugMessage(self.id, format!("Client {}: received from {}", self.id, source_id)));
+                        .send(ServerEvent::DebugMessage(self.id, format!("Server {}: received from {}", self.id, source_id)));
 
                     // send an ack to the sender for this fragment
                     self.send_ack(packet.clone(), fragment.clone());
