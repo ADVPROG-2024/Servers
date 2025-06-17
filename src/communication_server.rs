@@ -544,7 +544,7 @@ impl CommunicationServer {
 
             info!("DIO CANEEEEE bastardo - Server {} - counter: {:?}, dropid {}", self.id, counter, id_drop_drone);
 
-            const RETRY_LIMIT: u64 = 3;
+            const RETRY_LIMIT: u64 = 9;
 
             // Se abbiamo superato il limite di tentativi per questo drone...
             if *counter > RETRY_LIMIT {
