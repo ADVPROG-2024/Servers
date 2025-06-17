@@ -155,7 +155,7 @@ impl DronegowskiServer for CommunicationServer {
                     // Handle received message fragment from a client
                     let _ = self
                         .sim_controller_send
-                        .send(ServerEvent::DebugMessage(self.id, format!("Client {}: received from {}", self.id, client_id)));
+                        .send(ServerEvent::DebugMessage(self.id, format!("Server {}: received from {}", self.id, client_id)));
 
                     // Send an ACK for the received fragment
                     self.send_ack(packet.clone(), fragment.clone());
