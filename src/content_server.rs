@@ -164,9 +164,9 @@ impl DronegowskiServer for ContentServer {
         match packet.pack_type {
             PacketType::MsgFragment(ref fragment) => {
                 if let Some(source_id) = packet.routing_header.source() {
-                    let _ = self
-                        .sim_controller_send
-                        .send(ServerEvent::DebugMessage(self.id, format!("Server {}: received from {}", self.id, source_id)));
+                    // let _ = self
+                    //     .sim_controller_send
+                    //     .send(ServerEvent::DebugMessage(self.id, format!("Server {}: received from {}", self.id, source_id)));
 
                     // send an ack to the sender for this fragment
                     self.send_ack(packet.clone(), fragment.clone());
@@ -640,7 +640,7 @@ impl ContentServer {
             if *counter > RETRY_LIMIT {
                 let _ = self
                     .sim_controller_send
-                    .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {} / {}", self.id, counter, id_drop_drone, nack.fragment_index)));
+                    .send(ServerEvent::DebugMessage(self.id, format!("Server {}: nack drop {} from {}", self.id, counter, id_drop_drone)));
 
                 info!("Server {}: Limite NACK ({}) superato per il drone {}. Lo escludo e ricalcolo il percorso per la sessione.", self.id, RETRY_LIMIT, id_drop_drone);
                 self.excluded_nodes.insert(id_drop_drone);
@@ -670,9 +670,9 @@ impl ContentServer {
         } else {
             // Altri tipi di NACK: tentiamo subito un ricalcolo del percorso
             self.network_discovery();
-            let _ = self
-                .sim_controller_send
-                .send(ServerEvent::DebugMessage(self.id, format!("Server {}: new route?", self.id)));
+            // let _ = self
+            //     .sim_controller_send
+            //     .send(ServerEvent::DebugMessage(self.id, format!("Server {}: new route?", self.id)));
 
             if let Some(fragments) = self.pending_messages.get(&session_id) {
                 if let Some(packet) = fragments.get(nack.fragment_index as usize) {
@@ -715,6 +715,11 @@ impl ContentServer {
             if let Some(fragments) = self.pending_messages.get(&session_id) {
                 if let Some(updated_packet) = fragments.get(fragment_index as usize) {
                     if let Some(&next_hop) = updated_packet.routing_header.hops.get(1) {
+
+                        let _ = self
+                            .sim_controller_send
+                            .send(ServerEvent::DebugMessage(self.id, format!("Server {}: new route {:?}", self.id, new_path)));
+
                         self.send_packet_and_notify(updated_packet.clone(), next_hop);
                     } else {
                         error!("Server {}: Il nuovo percorso calcolato è invalido per il frammento {}.", self.id, fragment_index);
